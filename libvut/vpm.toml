@@ -3,3 +3,6 @@ name = "libvut"
 version = "0.1.0"
 
 [dependencies]
+
+[bin]
+libvut = "src/main.vut"
