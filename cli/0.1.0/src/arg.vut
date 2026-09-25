@@ -1,0 +1,15 @@
+# Positional argument specification.
+
+data Arg:
+  name: str
+  about: str
+  required: bool
+  default_value: str
+
+fn make(name: str, about: str, required: bool, default_value: str) -> Arg:
+  Arg(
+    name: name,
+    about: about,
+    required: required,
+    default_value: default_value
+  )

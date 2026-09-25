@@ -1,0 +1,53 @@
+# Phase 8: hidden commands / options / flags.
+
+import cli
+
+fn expect(label: str, actual: str, wanted: str) -> int:
+  if actual == wanted:
+    out("PASS $label")
+    return 0
+  out("FAIL $label: got=[$actual] want=[$wanted]")
+  1
+
+fn text(value: bool) -> str:
+  if value:
+    return "true"
+  "false"
+
+fn main() -> int:
+  failures = 0
+
+  serve = (
+    cli.command("serve")
+      .option("secret", hidden = true)
+      .option("port", short = "p")
+      .flag("trace", hidden = true)
+      .flag("verbose", short = "v")
+  )
+  internal = cli.command("internal", about = "Internal").hidden()
+  app = cli.app("demo").command(serve).command(internal)
+
+  top = cli.help_text(app)
+  failures = failures + expect("top.serve", text(top.contains("serve")), "true")
+  failures = failures + expect("top.internal", text(top.contains("internal")), "false")
+
+  detail = cli.command_help_text(app, "serve")
+  failures = failures + expect("detail.port", text(detail.contains("--port")), "true")
+  failures = failures + expect("detail.secret", text(detail.contains("--secret")), "false")
+  failures = failures + expect("detail.verbose", text(detail.contains("--verbose")), "true")
+  failures = failures + expect("detail.trace", text(detail.contains("--trace")), "false")
+
+  # Hidden specs still bind at runtime.
+  match cli.parse(app, @["serve", "--secret", "s", "--trace"]):
+    ok(invocation):
+      ctx = invocation.context
+      failures = failures + expect("run.secret", ctx.option_or("secret", "-"), "s")
+      failures = failures + expect("run.trace", text(ctx.flag("trace")), "true")
+    err(error):
+      failures = failures + expect("run.err", error.message, "")
+
+  if failures == 0:
+    out("HIDDEN-OK")
+    return 0
+  out("HIDDEN-FAILURES=$failures")
+  1

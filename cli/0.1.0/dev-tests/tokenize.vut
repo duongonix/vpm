@@ -1,0 +1,58 @@
+# Phase 2: pure tokenizer coverage.
+
+import cli
+
+fn expect(label: str, actual: str, wanted: str) -> int:
+  if actual == wanted:
+    out("PASS $label")
+    return 0
+  out("FAIL $label: got=[$actual] want=[$wanted]")
+  1
+
+fn bool_text(value: bool) -> str:
+  if value:
+    return "true"
+  "false"
+
+fn main() -> int:
+  failures = 0
+
+  tokens = cli.tokenize(@["serve", "--port", "8080", "--verbose=yes", "-pv", "--", "-x", "tail"])
+  failures = failures + expect("len", "$(tokens.len())", "8")
+
+  failures = failures + expect("t0.raw", tokens.at(0).raw, "serve")
+  failures = failures + expect("t0.value", tokens.at(0).value, "serve")
+
+  failures = failures + expect("t1.name", tokens.at(1).name, "port")
+  failures = failures + expect("t1.has_value", bool_text(tokens.at(1).has_value), "false")
+
+  failures = failures + expect("t2.raw", tokens.at(2).raw, "8080")
+
+  failures = failures + expect("t3.name", tokens.at(3).name, "verbose")
+  failures = failures + expect("t3.value", tokens.at(3).value, "yes")
+  failures = failures + expect("t3.has_value", bool_text(tokens.at(3).has_value), "true")
+
+  failures = failures + expect("t4.name", tokens.at(4).name, "pv")
+  failures = failures + expect("t4.raw", tokens.at(4).raw, "-pv")
+
+  failures = failures + expect("t5.raw", tokens.at(5).raw, "--")
+
+  failures = failures + expect("t6.raw", tokens.at(6).raw, "-x")
+  failures = failures + expect("t7.raw", tokens.at(7).raw, "tail")
+
+  # `--name=value` splitting and a lone `-` treated as a positional.
+  more = cli.tokenize(@["--port=3000", "-"])
+  failures = failures + expect("m0.name", more.at(0).name, "port")
+  failures = failures + expect("m0.value", more.at(0).value, "3000")
+  failures = failures + expect("m1.raw", more.at(1).raw, "-")
+
+  # After `--`, a second `--` is a positional, not a separator.
+  trailing = cli.tokenize(@["--", "--"])
+  failures = failures + expect("trailing.len", "$(trailing.len())", "2")
+  failures = failures + expect("trailing.1.raw", trailing.at(1).raw, "--")
+
+  if failures == 0:
+    out("TOKENIZE-OK")
+    return 0
+  out("TOKENIZE-FAILURES=$failures")
+  1

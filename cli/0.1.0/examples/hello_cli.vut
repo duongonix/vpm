@@ -1,0 +1,68 @@
+# hello-cli: a small, real command-line application built with the `cli`
+# package. It exercises subcommands, aliases, options, flags, typed accessors,
+# help/version, and the filesystem.
+
+import cli
+import fs
+import path
+
+fn cmd_init(ctx: cli.Context) -> int:
+  directory = ctx.option_or("dir", ".")
+  target = path.join(directory, "hello.txt")
+  match fs.write_str(target, "Hello from hello-cli\n"):
+    ok(flag):
+      out("created $target")
+      0
+    err(error):
+      out("could not create $target: $(error.message)")
+      1
+
+fn cmd_build(ctx: cli.Context) -> int:
+  target = ctx.option_or("target", "host")
+  if ctx.flag("release"):
+    out("build release target=$target")
+  else:
+    out("build debug target=$target")
+  0
+
+fn cmd_run(ctx: cli.Context) -> int:
+  port = ctx.option_int_or("port", 3000)
+  out("run port=$port")
+  0
+
+fn cmd_config(ctx: cli.Context) -> int:
+  key = ctx.arg_or("key", "")
+  value = ctx.option_or("value", "")
+  out("config $key=$value")
+  0
+
+fn main() -> int:
+  
+  app = (
+    cli.app("hello-cli", version = "1.0.0", about = "A tiny example Vut CLI")
+      .command(
+        cli.command("init", about = "Create hello.txt")
+          .alias("i")
+          .option("dir", short = "d", about = "Target directory", default_value = ".")
+          .handle(cmd_init)
+      )
+      .command(
+        cli.command("build", about = "Build the project")
+          .alias("b")
+          .option("target", short = "t", about = "Build target", default_value = "host")
+          .flag("release", short = "r", about = "Release build")
+          .handle(cmd_build)
+      )
+      .command(
+        cli.command("run", about = "Run the project")
+          .option("port", short = "p", about = "Port", default_value = "3000")
+          .handle(cmd_run)
+      )
+      .command(
+        cli.command("config", about = "Show configuration")
+          .arg("key", required = true)
+          .option("value", short = "v", about = "Value")
+          .handle(cmd_config)
+      )
+  )
+  cli.run(app)

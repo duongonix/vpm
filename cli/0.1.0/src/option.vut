@@ -1,0 +1,19 @@
+# Option specification for a named value such as `--port`.
+
+data Option:
+  name: str
+  short: str
+  about: str
+  required: bool
+  default_value: str
+  hidden: bool
+
+fn make(name: str, short: str, about: str, required: bool, default_value: str, hidden: bool) -> Option:
+  Option(
+    name: name,
+    short: short,
+    about: about,
+    required: required,
+    default_value: default_value,
+    hidden: hidden
+  )

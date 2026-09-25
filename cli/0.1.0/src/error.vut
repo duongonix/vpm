@@ -1,0 +1,79 @@
+# Argument parsing errors.
+#
+# Error values are built through the factory functions below so callers never
+# need to construct the payload-carrying enum states themselves.
+
+enum ErrorKind:
+  unknown_command
+  missing_command
+  unknown_option
+  missing_value
+  unexpected_value
+  missing_argument
+  unexpected_argument
+  invalid_definition
+
+data Error:
+  kind: ErrorKind
+  message: str
+
+fn unknown_command(name: str) -> Error:
+  Error(
+    kind: ErrorKind.unknown_command,
+    message: "unknown command `" + name + "`"
+  )
+
+fn missing_command() -> Error:
+  Error(
+    kind: ErrorKind.missing_command,
+    message: "no command was given"
+  )
+
+fn unknown_option(name: str) -> Error:
+  Error(
+    kind: ErrorKind.unknown_option,
+    message: "unknown option `" + name + "`"
+  )
+
+fn missing_value(name: str) -> Error:
+  Error(
+    kind: ErrorKind.missing_value,
+    message: "option `" + name + "` expects a value"
+  )
+
+fn unexpected_value(name: str) -> Error:
+  Error(
+    kind: ErrorKind.unexpected_value,
+    message: "flag `" + name + "` does not take a value"
+  )
+
+fn missing_argument(name: str) -> Error:
+  Error(
+    kind: ErrorKind.missing_argument,
+    message: "missing required argument `" + name + "`"
+  )
+
+fn unexpected_argument(value: str) -> Error:
+  Error(
+    kind: ErrorKind.unexpected_argument,
+    message: "unexpected argument `" + value + "`"
+  )
+
+# Unknown command with an optional "did you mean" suggestion.
+fn unknown_command_suggest(name: str, suggestion: str) -> Error:
+  text = "unknown command `" + name + "`"
+  if suggestion != "":
+    text = text + "; did you mean `" + suggestion + "`?"
+  Error(
+    kind: ErrorKind.unknown_command,
+    message: text
+  )
+
+fn invalid_definition(detail: str) -> Error:
+  Error(
+    kind: ErrorKind.invalid_definition,
+    message: "invalid command definition: " + detail
+  )
+
+fn message(error: Error) -> str:
+  error.message

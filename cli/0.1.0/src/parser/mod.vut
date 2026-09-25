@@ -1,0 +1,249 @@
+# Pure argument binder: turns tokenized argv into a resolved command plus the
+# `Context` handed to its handler. No I/O and no OS access live here.
+
+import .. app as app_model
+import .. command as command_model
+import .. context as context_model
+import .. error as error_model
+import.tokens as tokens_model
+
+data Invocation:
+  command: command_model.Command
+  context: context_model.Context
+
+# For a long option the canonical name equals the written name, so callers only
+# need a presence test. Short options need the canonical name, returned from a
+# loop variable rather than a temporary projection.
+fn _has_option_long(command: command_model.Command, name: str) -> bool:
+  found = false
+  index = 0
+  for index < command.options.len():
+    if command.options.at(index).name == name:
+      found = true
+    index = index + 1
+  found
+
+fn _has_flag_long(command: command_model.Command, name: str) -> bool:
+  found = false
+  index = 0
+  for index < command.flags.len():
+    if command.flags.at(index).name == name:
+      found = true
+    index = index + 1
+  found
+
+fn _option_name_short(command: command_model.Command, short: str) -> str:
+  for option in command.options:
+    if option.short == short:
+      return option.name
+  ""
+
+fn _flag_name_short(command: command_model.Command, short: str) -> str:
+  for flag in command.flags:
+    if flag.short == short:
+      return flag.name
+  ""
+
+fn _find_command(app: app_model.App, name: str) -> int:
+  selected = - 1
+  index = 0
+  for command in app.commands:
+    if command.name == name:
+      selected = index
+    else:
+      for alias in command.aliases:
+        if alias == name:
+          selected = index
+    index = index + 1
+  selected
+
+# Canonical command name for the first positional token, or "" when absent.
+# Used by the runner to pick which help to show.
+fn command_name(app: app_model.App, args: list[str]) -> str:
+  tokens = tokens_model.tokenize(args)
+  if tokens.len() == 0:
+    return ""
+  first = tokens.at(0)
+  if not first.is_positional():
+    return ""
+  target = first.value
+  for command in app.commands:
+    if command.name == target:
+      return command.name
+    for alias in command.aliases:
+      if alias == target:
+        return command.name
+  ""
+
+# Bounded edit distance for "did you mean" suggestions.
+fn _levenshtein(left: str, right: str) -> int:
+  rows = left.byte_len()
+  columns = right.byte_len()
+  width = columns + 1
+  table: list[int] = @[]
+  size =(rows + 1) * width
+  fill = 0
+  for fill < size:
+    table.push(0)
+    fill = fill + 1
+  column = 0
+  for column <= columns:
+    table.set(column, column)
+    column = column + 1
+  row = 1
+  for row <= rows:
+    table.set(row * width, row)
+    row = row + 1
+  row = 1
+  for row <= rows:
+    column = 1
+    for column <= columns:
+      cost = 1
+      if left.substring(row - 1, row) == right.substring(column - 1, column):
+        cost = 0
+      deletion = table.at((row - 1) * width + column) + 1
+      insertion = table.at(row * width +(column - 1)) + 1
+      substitution = table.at((row - 1) * width +(column - 1)) + cost
+      best = deletion
+      if insertion < best:
+        best = insertion
+      if substitution < best:
+        best = substitution
+      table.set(row * width + column, best)
+      column = column + 1
+    row = row + 1
+  table.at(rows * width + columns)
+
+fn _suggest(app: app_model.App, name: str) -> str:
+  candidates: list[str] = @[]
+  for command in app.commands:
+    candidates.push(command.name)
+    for alias in command.aliases:
+      candidates.push(alias)
+  best_index = - 1
+  best_distance = 3
+  index = 0
+  for index < candidates.len():
+    distance = _levenshtein(name, candidates.at(index))
+    if distance < best_distance:
+      best_distance = distance
+      best_index = index
+    index = index + 1
+  if best_index < 0:
+    return ""
+  candidates.at(best_index)
+
+fn _bind(command: command_model.Command, rest: list[tokens_model.Token]) -> result[Invocation, error_model.Error]:
+  positional: list[str] = @[]
+  arg_values: map[str, str] =()
+  option_values: map[str, str] =()
+  flag_values: map[str, bool] =()
+  after_separator = false
+  index = 0
+  for index < rest.len():
+    token = rest.at(index)
+    if after_separator:
+      positional.push(token.raw)
+      index = index + 1
+    elif token.is_separator():
+      after_separator = true
+      index = index + 1
+    elif token.is_long():
+      name = token.name
+      if _has_option_long(command, name):
+        if token.has_value:
+          option_values.set(name, token.value)
+          index = index + 1
+        else:
+          if index + 1 >= rest.len():
+            return err(error_model.missing_value(name))
+          option_values.set(name, rest.at(index + 1).raw)
+          index = index + 2
+      elif _has_flag_long(command, name):
+        if token.has_value:
+          return err(error_model.unexpected_value(name))
+        flag_values.set(name, true)
+        index = index + 1
+      else:
+        return err(error_model.unknown_option("--" + name))
+    elif token.is_short():
+      cluster = token.name
+      consumed_next = false
+      finished = false
+      cursor = 0
+      for cursor < cluster.byte_len():
+        if finished:
+          break
+        letter = cluster.substring(cursor, cursor + 1)
+        option_name = _option_name_short(command, letter)
+        flag_name = _flag_name_short(command, letter)
+        if option_name != "":
+          attached = cluster.substring(cursor + 1, cluster.byte_len())
+          if attached.byte_len() > 0:
+            option_values.set(option_name, attached)
+          else:
+            if index + 1 >= rest.len():
+              return err(error_model.missing_value(option_name))
+            option_values.set(option_name, rest.at(index + 1).raw)
+            consumed_next = true
+          finished = true
+        elif flag_name != "":
+          flag_values.set(flag_name, true)
+          cursor = cursor + 1
+        else:
+          return err(error_model.unknown_option("-" + letter))
+      if consumed_next:
+        index = index + 2
+      else:
+        index = index + 1
+    else:
+      positional.push(token.raw)
+      index = index + 1
+
+  declared = command.args
+  if positional.len() > declared.len():
+    return err(error_model.unexpected_argument(positional.at(declared.len())))
+  fill = 0
+  for fill < declared.len():
+    argument = declared.at(fill)
+    if fill < positional.len():
+      arg_values.set(argument.name, positional.at(fill))
+    elif argument.required:
+      return err(error_model.missing_argument(argument.name))
+    else:
+      arg_values.set(argument.name, argument.default_value)
+    fill = fill + 1
+
+  for option in command.options:
+    if not option_values.contains_key(option.name):
+      if option.required:
+        return err(error_model.missing_value(option.name))
+      if option.default_value != "":
+        option_values.set(option.name, option.default_value)
+
+  ok(
+    Invocation(
+      command: command,
+      context: context_model.of(command.name, arg_values, option_values, flag_values)
+    )
+  )
+
+fn parse(app: app_model.App, args: list[str]) -> result[Invocation, error_model.Error]:
+  tokens = tokens_model.tokenize(args)
+  if app.commands.len() == 0:
+    return err(error_model.missing_command())
+  if tokens.len() == 0:
+    return err(error_model.missing_command())
+  first = tokens.at(0)
+  if not first.is_positional():
+    return err(error_model.unknown_command(first.raw))
+  selected = _find_command(app, first.value)
+  if selected < 0:
+    return err(error_model.unknown_command_suggest(first.value, _suggest(app, first.value)))
+  command = app.commands.at(selected)
+  rest: list[tokens_model.Token] = @[]
+  index = 1
+  for index < tokens.len():
+    rest.push(tokens.at(index))
+    index = index + 1
+  _bind(command, rest)
