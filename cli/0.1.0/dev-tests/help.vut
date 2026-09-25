@@ -1,0 +1,64 @@
+# Phase 4: help / usage / version rendering.
+
+import cli
+
+fn expect(label: str, actual: str, wanted: str) -> int:
+  if actual == wanted:
+    out("PASS $label")
+    return 0
+  out("FAIL $label: got=[$actual] want=[$wanted]")
+  1
+
+fn bool_text(value: bool) -> str:
+  if value:
+    return "true"
+  "false"
+
+fn main() -> int:
+  failures = 0
+
+  serve = (
+    cli.command("serve", about = "Start server")
+      .alias("s")
+      .arg("path", about = "Directory", required = true)
+      .option("port", short = "p", about = "Port", default_value = "3000")
+      .flag("verbose", short = "v", about = "Verbose output")
+  )
+  build = cli.command("build", about = "Build project")
+  app = cli.app("demo", version = "0.1.0", about = "Example CLI").command(serve).command(build)
+
+  version = cli.version_text(app)
+  failures = failures + expect("version", version, "demo 0.1.0")
+
+  top = cli.help_text(app)
+  failures = failures + expect("top.title", bool_text(top.contains("demo 0.1.0")), "true")
+  failures = failures + expect("top.about", bool_text(top.contains("Example CLI")), "true")
+  failures = failures + expect("top.usage", bool_text(top.contains("usage: demo <command> [options]")), "true")
+  failures = failures + expect("top.serve", bool_text(top.contains("serve")), "true")
+  failures = failures + expect("top.build", bool_text(top.contains("Build project")), "true")
+  failures = failures + expect("top.help", bool_text(top.contains("--help")), "true")
+  failures = failures + expect("top.version", bool_text(top.contains("--version")), "true")
+
+  detail = cli.command_help_text(app, "serve")
+  failures = failures + expect("cmd.about", bool_text(detail.contains("Start server")), "true")
+  failures = failures + expect("cmd.usage", bool_text(detail.contains("usage: demo serve")), "true")
+  failures = failures + expect("cmd.path", bool_text(detail.contains("<path>")), "true")
+  failures = failures + expect("cmd.required", bool_text(detail.contains("(required)")), "true")
+  failures = failures + expect("cmd.port", bool_text(detail.contains("--port <value>")), "true")
+  failures = failures + expect("cmd.default", bool_text(detail.contains("(default: 3000)")), "true")
+  failures = failures + expect("cmd.verbose", bool_text(detail.contains("--verbose")), "true")
+
+  alias_detail = cli.command_help_text(app, "s")
+  failures = failures + expect("alias.usage", bool_text(alias_detail.contains("usage: demo serve")), "true")
+
+  fallback = cli.command_help_text(app, "nope")
+  failures = failures + expect("fallback.usage", bool_text(fallback.contains("usage: demo <command>")), "true")
+
+  bare = cli.app("tool")
+  failures = failures + expect("bare.version", cli.version_text(bare), "tool")
+
+  if failures == 0:
+    out("HELP-OK")
+    return 0
+  out("HELP-FAILURES=$failures")
+  1

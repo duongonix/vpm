@@ -1,0 +1,48 @@
+# Phase 5: run adapter (help/version interception, dispatch, exit codes).
+
+import cli
+
+fn serve_handler(ctx: cli.Context) -> int:
+  out("serving")
+  7
+
+fn expect(label: str, actual: str, wanted: str) -> int:
+  if actual == wanted:
+    out("PASS $label")
+    return 0
+  out("FAIL $label: got=[$actual] want=[$wanted]")
+  1
+
+fn main() -> int:
+  failures = 0
+
+  serve = cli.command("serve", about = "Start").arg("path", required = true).handle(serve_handler)
+  app = cli.app("demo", version = "0.1.0").command(serve)
+
+  code_version = cli.run_with(app, @["--version"])
+  failures = failures + expect("version.code", "$code_version", "0")
+
+  code_help = cli.run_with(app, @["--help"])
+  failures = failures + expect("help.code", "$code_help", "0")
+
+  code_command_help = cli.run_with(app, @["serve", "--help"])
+  failures = failures + expect("command-help.code", "$code_command_help", "0")
+
+  code_handler = cli.run_with(app, @["serve", "./p"])
+  failures = failures + expect("handler.code", "$code_handler", "7")
+
+  code_unknown = cli.run_with(app, @["nope"])
+  failures = failures + expect("unknown.code", "$code_unknown", "$(cli.EXIT_USAGE)")
+
+  code_missing = cli.run_with(app, @["serve"])
+  failures = failures + expect("missing.code", "$code_missing", "$(cli.EXIT_USAGE)")
+
+  # After `--`, `--help` is a positional value, not the help flag.
+  code_separator = cli.run_with(app, @["serve", "--", "--help"])
+  failures = failures + expect("separator.code", "$code_separator", "7")
+
+  if failures == 0:
+    out("RUN-OK")
+    return 0
+  out("RUN-FAILURES=$failures")
+  1

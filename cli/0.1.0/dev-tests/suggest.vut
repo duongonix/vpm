@@ -1,0 +1,48 @@
+# Phase 8: "did you mean" suggestions for mistyped commands.
+
+import cli
+
+fn expect(label: str, actual: str, wanted: str) -> int:
+  if actual == wanted:
+    out("PASS $label")
+    return 0
+  out("FAIL $label: got=[$actual] want=[$wanted]")
+  1
+
+fn text(value: bool) -> str:
+  if value:
+    return "true"
+  "false"
+
+fn main() -> int:
+  failures = 0
+
+  app = (
+    cli.app("demo")
+      .command(cli.command("serve"))
+      .command(cli.command("build").alias("b"))
+  )
+
+  match cli.parse(app, @["serv"]):
+    ok(invocation):
+      failures = failures + expect("close", "ok", "err")
+    err(error):
+      failures = failures + expect("close.suggest", text(error.message.contains("did you mean `serve`")), "true")
+
+  match cli.parse(app, @["zzzz"]):
+    ok(invocation):
+      failures = failures + expect("far", "ok", "err")
+    err(error):
+      failures = failures + expect("far.no-suggestion", text(error.message.contains("did you mean")), "false")
+
+  match cli.parse(app, @["buld"]):
+    ok(invocation):
+      failures = failures + expect("alias", "ok", "err")
+    err(error):
+      failures = failures + expect("alias.suggest", text(error.message.contains("did you mean `build`")), "true")
+
+  if failures == 0:
+    out("SUGGEST-OK")
+    return 0
+  out("SUGGEST-FAILURES=$failures")
+  1

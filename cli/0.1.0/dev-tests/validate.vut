@@ -1,0 +1,70 @@
+# Phase 8: definition validation.
+
+import cli
+
+fn expect(label: str, actual: str, wanted: str) -> int:
+  if actual == wanted:
+    out("PASS $label")
+    return 0
+  out("FAIL $label: got=[$actual] want=[$wanted]")
+  1
+
+fn text(value: bool) -> str:
+  if value:
+    return "true"
+  "false"
+
+fn main() -> int:
+  failures = 0
+
+  good = cli.app("demo").command(cli.command("serve").arg("path").option("port", short = "p").flag("verbose", short = "v"))
+  match cli.validate(good):
+    ok(value):
+      failures = failures + expect("valid", "ok", "ok")
+    err(error):
+      failures = failures + expect("valid", error.message, "")
+
+  reserved = cli.app("demo").command(cli.command("help"))
+  match cli.validate(reserved):
+    ok(value):
+      failures = failures + expect("reserved", "ok", "err")
+    err(error):
+      failures = failures + expect("reserved", text(error.message.contains("reserved")), "true")
+
+  duplicate_option = cli.app("demo").command(cli.command("serve").option("port").option("port"))
+  match cli.validate(duplicate_option):
+    ok(value):
+      failures = failures + expect("dup-option", "ok", "err")
+    err(error):
+      failures = failures + expect("dup-option", text(error.message.contains("duplicate option")), "true")
+
+  duplicate_command = cli.app("demo").command(cli.command("serve")).command(cli.command("serve"))
+  match cli.validate(duplicate_command):
+    ok(value):
+      failures = failures + expect("dup-command", "ok", "err")
+    err(error):
+      failures = failures + expect("dup-command", text(error.message.contains("duplicate command")), "true")
+
+  short_clash = cli.app("demo").command(cli.command("serve").option("port", short = "p").flag("verbose", short = "p"))
+  match cli.validate(short_clash):
+    ok(value):
+      failures = failures + expect("short-clash", "ok", "err")
+    err(error):
+      failures = failures + expect("short-clash", text(error.message.contains("option and a flag")), "true")
+
+  reserved_short = cli.app("demo").command(cli.command("serve").flag("quiet", short = "h"))
+  match cli.validate(reserved_short):
+    ok(value):
+      failures = failures + expect("reserved-short", "ok", "err")
+    err(error):
+      failures = failures + expect("reserved-short", text(error.message.contains("reserved")), "true")
+
+  # run_with refuses an invalid app before doing anything else.
+  code = cli.run_with(reserved, @["help"])
+  failures = failures + expect("run.invalid", "$code", "2")
+
+  if failures == 0:
+    out("VALIDATE-OK")
+    return 0
+  out("VALIDATE-FAILURES=$failures")
+  1

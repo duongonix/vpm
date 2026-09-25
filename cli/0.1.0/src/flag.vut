@@ -1,0 +1,15 @@
+# Boolean flag specification such as `--verbose`.
+
+data Flag:
+  name: str
+  short: str
+  about: str
+  hidden: bool
+
+fn make(name: str, short: str, about: str, hidden: bool) -> Flag:
+  Flag(
+    name: name,
+    short: short,
+    about: about,
+    hidden: hidden
+  )

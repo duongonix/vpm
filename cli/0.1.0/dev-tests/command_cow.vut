@@ -1,0 +1,66 @@
+# COW / value semantics for the functional fluent Command builder.
+
+import cli
+
+fn expect(label: str, actual: str, wanted: str) -> int:
+  if actual == wanted:
+    out("PASS $label")
+    return 0
+  out("FAIL $label: got=[$actual] want=[$wanted]")
+  1
+
+fn main() -> int:
+  failures = 0
+
+  # positional args: base must not change
+  base = cli.command("serve")
+  a = base.arg("path")
+  b = base.arg("host")
+  failures = failures + expect("args.base.len", "$(base.args.len())", "0")
+  failures = failures + expect("args.a.len", "$(a.args.len())", "1")
+  failures = failures + expect("args.a.0", a.args.at(0).name, "path")
+  failures = failures + expect("args.b.len", "$(b.args.len())", "1")
+  failures = failures + expect("args.b.0", b.args.at(0).name, "host")
+
+  # options: base must not change
+  ob = cli.command("x")
+  o1 = ob.option("port", short = "p")
+  o2 = ob.option("host", short = "h")
+  failures = failures + expect("options.base.len", "$(ob.options.len())", "0")
+  failures = failures + expect("options.o1.len", "$(o1.options.len())", "1")
+  failures = failures + expect("options.o1.0", o1.options.at(0).name, "port")
+  failures = failures + expect("options.o2.len", "$(o2.options.len())", "1")
+  failures = failures + expect("options.o2.0", o2.options.at(0).name, "host")
+
+  # flags: base must not change
+  fb = cli.command("x")
+  f1 = fb.flag("verbose", short = "v")
+  f2 = fb.flag("debug", short = "d")
+  failures = failures + expect("flags.base.len", "$(fb.flags.len())", "0")
+  failures = failures + expect("flags.f1.len", "$(f1.flags.len())", "1")
+  failures = failures + expect("flags.f1.0", f1.flags.at(0).name, "verbose")
+  failures = failures + expect("flags.f2.len", "$(f2.flags.len())", "1")
+  failures = failures + expect("flags.f2.0", f2.flags.at(0).name, "debug")
+
+  # about: base must not change
+  ab = cli.command("x", about = "base")
+  a1 = ab.about("changed")
+  failures = failures + expect("about.base", ab.about, "base")
+  failures = failures + expect("about.a1", a1.about, "changed")
+
+  # handler: base must keep the default, derived gets the new one
+  handler_value = 3
+  fn3 = fn(ctx: cli.Context):
+    handler_value
+  hb = cli.command("x")
+  h1 = hb.handle(fn3)
+  base_code = hb.handler(cli.context("x"))
+  derived_code = h1.handler(cli.context("x"))
+  failures = failures + expect("handler.base", "$base_code", "0")
+  failures = failures + expect("handler.derived", "$derived_code", "3")
+
+  if failures == 0:
+    out("COMMAND-COW-OK")
+    return 0
+  out("COMMAND-COW-FAILURES=$failures")
+  1

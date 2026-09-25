@@ -1,0 +1,53 @@
+# Handlers: named function and capturing closure, stored through builders and App.
+
+import cli
+
+fn named_handler(ctx: cli.Context) -> int:
+  out("named handler ran")
+  5
+
+fn expect(label: str, actual: str, wanted: str) -> int:
+  if actual == wanted:
+    out("PASS $label")
+    return 0
+  out("FAIL $label: got=[$actual] want=[$wanted]")
+  1
+
+fn main() -> int:
+  failures = 0
+
+  # Named handler reaches the App and stays callable.
+  cmd = cli.command("run").handle(named_handler)
+  base = cli.app("demo")
+  app = base.command(cmd)
+  failures = failures + expect("app.base.commands", "$(base.commands.len())", "0")
+  failures = failures + expect("app.commands", "$(app.commands.len())", "1")
+
+  first = app.commands.at(0)
+  code = first.handler(cli.context("run"))
+  failures = failures + expect("named.code", "$code", "5")
+
+  # Capturing closure stored as a handler.
+  factor = 7
+  closure = fn(ctx: cli.Context):
+    factor
+  cmd2 = cli.command("capture").handle(closure)
+  app2 = cli.app("demo2").command(cmd2)
+  h2 = app2.commands.at(0).handler
+  code2 = h2(cli.context("capture"))
+  failures = failures + expect("closure.code", "$code2", "7")
+
+  # Handler survives several builder operations before reaching the App.
+  cmd3 = cli.command("multi").arg("a").option("b").flag("c").handle(named_handler)
+  app3 = cli.app("demo3").command(cmd3)
+  failures = failures + expect("survivor.args", "$(app3.commands.at(0).args.len())", "1")
+  failures = failures + expect("survivor.options", "$(app3.commands.at(0).options.len())", "1")
+  failures = failures + expect("survivor.flags", "$(app3.commands.at(0).flags.len())", "1")
+  code3 = app3.commands.at(0).handler(cli.context("multi"))
+  failures = failures + expect("survivor.code", "$code3", "5")
+
+  if failures == 0:
+    out("HANDLERS-OK")
+    return 0
+  out("HANDLERS-FAILURES=$failures")
+  1
