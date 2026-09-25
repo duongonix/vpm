@@ -1,0 +1,43 @@
+# COW / value semantics for the functional fluent App builder.
+
+import cli
+
+fn expect(label: str, actual: str, wanted: str) -> int:
+  if actual == wanted:
+    out("PASS $label")
+    return 0
+  out("FAIL $label: got=[$actual] want=[$wanted]")
+  1
+
+fn main() -> int:
+  failures = 0
+
+  serve = cli.command("serve")
+  build = cli.command("build")
+
+  base = cli.app("demo", version = "0.1.0", about = "Example")
+  a = base.command(serve)
+  b = base.command(build)
+
+  failures = failures + expect("base.name", base.name, "demo")
+  failures = failures + expect("base.commands.len", "$(base.commands.len())", "0")
+  failures = failures + expect("a.commands.len", "$(a.commands.len())", "1")
+  failures = failures + expect("a.cmd0", a.commands.at(0).name, "serve")
+  failures = failures + expect("b.commands.len", "$(b.commands.len())", "1")
+  failures = failures + expect("b.cmd0", b.commands.at(0).name, "build")
+
+  # chaining two commands onto one app keeps both, base stays empty
+  chained = (
+    cli.app("demo2")
+      .command(serve)
+      .command(build)
+  )
+  failures = failures + expect("chained.commands.len", "$(chained.commands.len())", "2")
+  failures = failures + expect("chained.cmd0", chained.commands.at(0).name, "serve")
+  failures = failures + expect("chained.cmd1", chained.commands.at(1).name, "build")
+
+  if failures == 0:
+    out("APP-COW-OK")
+    return 0
+  out("APP-COW-FAILURES=$failures")
+  1

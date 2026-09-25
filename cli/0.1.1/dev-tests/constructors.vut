@@ -1,0 +1,61 @@
+# Constructor coverage for the public `cli` surface.
+
+import cli
+
+fn expect(label: str, actual: str, wanted: str) -> int:
+  if actual == wanted:
+    out("PASS $label")
+    return 0
+  out("FAIL $label: got=[$actual] want=[$wanted]")
+  1
+
+fn bool_text(value: bool) -> str:
+  if value:
+    return "true"
+  "false"
+
+fn main() -> int:
+  failures = 0
+
+  a = cli.app("demo", version = "0.1.0", about = "Example")
+  failures = failures + expect("app.name", a.name, "demo")
+  failures = failures + expect("app.version", a.version, "0.1.0")
+  failures = failures + expect("app.about", a.about, "Example")
+  failures = failures + expect("app.commands.len", "$(a.commands.len())", "0")
+
+  c = cli.command("serve", about = "Start server")
+  failures = failures + expect("command.name", c.name, "serve")
+  failures = failures + expect("command.about", c.about, "Start server")
+  failures = failures + expect("command.args.len", "$(c.args.len())", "0")
+  failures = failures + expect("command.options.len", "$(c.options.len())", "0")
+  failures = failures + expect("command.flags.len", "$(c.flags.len())", "0")
+
+  positional = cli.arg("path", about = "Directory", required = true, default_value = ".")
+  failures = failures + expect("arg.name", positional.name, "path")
+  failures = failures + expect("arg.about", positional.about, "Directory")
+  failures = failures + expect("arg.required", bool_text(positional.required), "true")
+  failures = failures + expect("arg.default", positional.default_value, ".")
+
+  port = cli.option("port", short = "p", about = "Port", default_value = "3000")
+  failures = failures + expect("option.name", port.name, "port")
+  failures = failures + expect("option.short", port.short, "p")
+  failures = failures + expect("option.about", port.about, "Port")
+  failures = failures + expect("option.default", port.default_value, "3000")
+
+  verbose = cli.flag("verbose", short = "v", about = "Verbose")
+  failures = failures + expect("flag.name", verbose.name, "verbose")
+  failures = failures + expect("flag.short", verbose.short, "v")
+  failures = failures + expect("flag.about", verbose.about, "Verbose")
+
+  ctx = cli.context("serve").with_arg("path", "./public").with_option("port", "8080").with_flag("verbose", true)
+  failures = failures + expect("context.command", ctx.command, "serve")
+  failures = failures + expect("context.arg", ctx.arg_or("path", "-"), "./public")
+  failures = failures + expect("context.option", ctx.option_or("port", "-"), "8080")
+  failures = failures + expect("context.flag", bool_text(ctx.flag("verbose")), "true")
+  failures = failures + expect("context.missing", ctx.arg_or("missing", "-"), "-")
+
+  if failures == 0:
+    out("CONSTRUCTORS-OK")
+    return 0
+  out("CONSTRUCTORS-FAILURES=$failures")
+  1

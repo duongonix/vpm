@@ -1,0 +1,151 @@
+# Application specification and its functional fluent builder.
+
+import.command as command_model
+import.error as error_model
+
+data App:
+  name: str
+  version: str
+  about: str
+  commands: list[command_model.Command]
+
+fn make(name: str, version: str, about: str) -> App:
+  App(
+    name: name,
+    version: version,
+    about: about,
+    commands: @[]
+  )
+
+# Returns a new `App`; the receiver is left unchanged.
+fn App.command(cmd: command_model.Command) -> App:
+  commands = self.commands
+  commands.push(cmd)
+  App(
+    name: self.name,
+    version: self.version,
+    about: self.about,
+    commands: commands
+  )
+
+fn _is_reserved(name: str) -> bool:
+  if name == "help":
+    return true
+  if name == "version":
+    return true
+  false
+
+# Returns "" when the command is valid, otherwise a description of the problem.
+fn _command_error(command: command_model.Command) -> str:
+  for option in command.options:
+    if _is_reserved(option.name):
+      return "option name `" + option.name + "` is reserved"
+    if option.short == "h":
+      return "option short `-h` is reserved"
+    if option.short == "V":
+      return "option short `-V` is reserved"
+  for flag in command.flags:
+    if _is_reserved(flag.name):
+      return "flag name `" + flag.name + "` is reserved"
+    if flag.short == "h":
+      return "flag short `-h` is reserved"
+    if flag.short == "V":
+      return "flag short `-V` is reserved"
+
+  i = 0
+  for i < command.options.len():
+    j = i + 1
+    for j < command.options.len():
+      if command.options.at(i).name == command.options.at(j).name:
+        return "duplicate option `" + command.options.at(i).name + "`"
+      j = j + 1
+    i = i + 1
+
+  i = 0
+  for i < command.flags.len():
+    j = i + 1
+    for j < command.flags.len():
+      if command.flags.at(i).name == command.flags.at(j).name:
+        return "duplicate flag `" + command.flags.at(i).name + "`"
+      j = j + 1
+    i = i + 1
+
+  i = 0
+  for i < command.options.len():
+    j = i + 1
+    for j < command.options.len():
+      if command.options.at(i).short != "":
+        if command.options.at(i).short == command.options.at(j).short:
+          return "duplicate option short `-" + command.options.at(i).short + "`"
+      j = j + 1
+    i = i + 1
+
+  i = 0
+  for i < command.flags.len():
+    j = i + 1
+    for j < command.flags.len():
+      if command.flags.at(i).short != "":
+        if command.flags.at(i).short == command.flags.at(j).short:
+          return "duplicate flag short `-" + command.flags.at(i).short + "`"
+      j = j + 1
+    i = i + 1
+
+  i = 0
+  for i < command.options.len():
+    j = 0
+    for j < command.flags.len():
+      if command.options.at(i).short != "":
+        if command.options.at(i).short == command.flags.at(j).short:
+          return "short `-" + command.options.at(i).short + "` is used by an option and a flag"
+      j = j + 1
+    i = i + 1
+
+  i = 0
+  for i < command.args.len():
+    j = i + 1
+    for j < command.args.len():
+      if command.args.at(i).name == command.args.at(j).name:
+        return "duplicate argument `" + command.args.at(i).name + "`"
+      j = j + 1
+    i = i + 1
+
+  ""
+
+# Returns "" when the app is valid, otherwise a description of the problem.
+fn _validation_error(app: App) -> str:
+  for command in app.commands:
+    if _is_reserved(command.name):
+      return "command name `" + command.name + "` is reserved"
+    for alias in command.aliases:
+      if _is_reserved(alias):
+        return "command alias `" + alias + "` is reserved"
+    detail = _command_error(command)
+    if detail != "":
+      return detail
+
+  names: list[str] = @[]
+  for command in app.commands:
+    names.push(command.name)
+    for alias in command.aliases:
+      names.push(alias)
+  i = 0
+  for i < names.len():
+    j = i + 1
+    for j < names.len():
+      if names.at(i) == names.at(j):
+        return "duplicate command name or alias `" + names.at(i) + "`"
+      j = j + 1
+    i = i + 1
+  ""
+
+fn validate_message(app: App) -> str:
+  detail = _validation_error(app)
+  if detail == "":
+    return ""
+  "invalid command definition: " + detail
+
+fn validate(app: App) -> result[unit, error_model.Error]:
+  detail = _validation_error(app)
+  if detail != "":
+    return err(error_model.invalid_definition(detail))
+  ok(unit)

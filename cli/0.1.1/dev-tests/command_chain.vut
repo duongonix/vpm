@@ -1,0 +1,49 @@
+# Functional fluent Command builder: full chain, nested fields, handler.
+
+import cli
+
+fn serve(ctx: cli.Context) -> int:
+  out("serve handler ran")
+  0
+
+fn expect(label: str, actual: str, wanted: str) -> int:
+  if actual == wanted:
+    out("PASS $label")
+    return 0
+  out("FAIL $label: got=[$actual] want=[$wanted]")
+  1
+
+fn main() -> int:
+  failures = 0
+
+  cmd = (
+    cli.command("serve", about = "Start server")
+      .arg("path", about = "Directory", default_value = ".")
+      .option("port", short = "p", about = "Port", default_value = "3000")
+      .flag("verbose", short = "v", about = "Verbose")
+      .handle(serve)
+  )
+
+  failures = failures + expect("name", cmd.name, "serve")
+  failures = failures + expect("about", cmd.about, "Start server")
+  failures = failures + expect("args.len", "$(cmd.args.len())", "1")
+  failures = failures + expect("arg.name", cmd.args.at(0).name, "path")
+  failures = failures + expect("arg.about", cmd.args.at(0).about, "Directory")
+  failures = failures + expect("arg.default", cmd.args.at(0).default_value, ".")
+  failures = failures + expect("options.len", "$(cmd.options.len())", "1")
+  failures = failures + expect("option.name", cmd.options.at(0).name, "port")
+  failures = failures + expect("option.short", cmd.options.at(0).short, "p")
+  failures = failures + expect("option.about", cmd.options.at(0).about, "Port")
+  failures = failures + expect("option.default", cmd.options.at(0).default_value, "3000")
+  failures = failures + expect("flags.len", "$(cmd.flags.len())", "1")
+  failures = failures + expect("flag.name", cmd.flags.at(0).name, "verbose")
+  failures = failures + expect("flag.short", cmd.flags.at(0).short, "v")
+
+  code = cmd.handler(cli.context("serve"))
+  failures = failures + expect("handler.code", "$code", "0")
+
+  if failures == 0:
+    out("COMMAND-CHAIN-OK")
+    return 0
+  out("COMMAND-CHAIN-FAILURES=$failures")
+  1

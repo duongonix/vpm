@@ -1,0 +1,124 @@
+# Help, usage, and version rendering. Pure string building; no I/O.
+
+import.app as app_model
+import.command as command_model
+import.arg as arg_model
+import.option as option_model
+import.flag as flag_model
+
+fn version_text(app: app_model.App) -> str:
+  if app.version != "":
+    return app.name + " " + app.version
+  app.name
+
+fn _usage_line(app_name: str, command: command_model.Command) -> str:
+  parts: list[str] = @[]
+  parts.push("usage: " + app_name + " " + command.name)
+  if command.options.len() > 0:
+    parts.push("[options]")
+  elif command.flags.len() > 0:
+    parts.push("[options]")
+  for argument in command.args:
+    if argument.required:
+      parts.push("<" + argument.name + ">")
+    else:
+      parts.push("[" + argument.name + "]")
+  parts.join(" ")
+
+fn _arg_line(argument: arg_model.Arg) -> str:
+  parts: list[str] = @[]
+  parts.push("  " + argument.name)
+  if argument.required:
+    parts.push("(required)")
+  if argument.default_value != "":
+    parts.push("(default: " + argument.default_value + ")")
+  if argument.about != "":
+    parts.push(argument.about)
+  parts.join(" ")
+
+fn _option_line(option: option_model.Option) -> str:
+  head: list[str] = @[]
+  if option.short != "":
+    head.push("-" + option.short + ", --" + option.name)
+  else:
+    head.push("--" + option.name)
+  head.push("<value>")
+  parts: list[str] = @[]
+  parts.push("  " + head.join(" "))
+  if option.required:
+    parts.push("(required)")
+  if option.default_value != "":
+    parts.push("(default: " + option.default_value + ")")
+  if option.about != "":
+    parts.push(option.about)
+  parts.join(" ")
+
+fn _flag_line(flag: flag_model.Flag) -> str:
+  head: list[str] = @[]
+  if flag.short != "":
+    head.push("-" + flag.short + ", --" + flag.name)
+  else:
+    head.push("--" + flag.name)
+  parts: list[str] = @[]
+  parts.push("  " + head.join(" "))
+  if flag.about != "":
+    parts.push(flag.about)
+  parts.join(" ")
+
+fn _render_command_help(app: app_model.App, command: command_model.Command) -> str:
+  lines: list[str] = @[]
+  if command.about != "":
+    lines.push(command.about)
+    lines.push("")
+  lines.push(_usage_line(app.name, command))
+  if command.args.len() > 0:
+    lines.push("")
+    lines.push("arguments:")
+    for argument in command.args:
+      lines.push(_arg_line(argument))
+  lines.push("")
+  lines.push("options:")
+  for option in command.options:
+    if not option.hidden:
+      lines.push(_option_line(option))
+  lines.push("  -h, --help  Show help")
+  if command.flags.len() > 0:
+    lines.push("")
+    lines.push("flags:")
+    for flag in command.flags:
+      if not flag.hidden:
+        lines.push(_flag_line(flag))
+  lines.join("\n")
+
+fn command_help_text(app: app_model.App, name: str) -> str:
+  for command in app.commands:
+    if command.name == name:
+      return _render_command_help(app, command)
+    for alias in command.aliases:
+      if alias == name:
+        return _render_command_help(app, command)
+  help_text(app)
+
+fn help_text(app: app_model.App) -> str:
+  lines: list[str] = @[]
+  lines.push(version_text(app))
+  if app.about != "":
+    lines.push("")
+    lines.push(app.about)
+  lines.push("")
+  lines.push("usage: " + app.name + " <command> [options]")
+  if app.commands.len() > 0:
+    lines.push("")
+    lines.push("commands:")
+    for command in app.commands:
+      if not command.hidden:
+        entry: list[str] = @[]
+        entry.push("  " + command.name)
+        if command.about != "":
+          entry.push(command.about)
+        lines.push(entry.join("  "))
+  lines.push("")
+  lines.push("options:")
+  lines.push("  -h, --help  Show help")
+  lines.push("  -V, --version  Show version")
+  lines.join("\n")

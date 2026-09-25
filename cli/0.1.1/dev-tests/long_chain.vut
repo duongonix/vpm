@@ -1,0 +1,53 @@
+# Long fluent chain regression: 20 builder operations, clean exit (no leak).
+
+import cli
+
+fn expect(label: str, actual: str, wanted: str) -> int:
+  if actual == wanted:
+    out("PASS $label")
+    return 0
+  out("FAIL $label: got=[$actual] want=[$wanted]")
+  1
+
+fn main() -> int:
+  failures = 0
+
+  cmd = (
+    cli.command("s")
+      .arg("a0")
+      .arg("a1")
+      .arg("a2")
+      .arg("a3")
+      .arg("a4")
+      .arg("a5")
+      .arg("a6")
+      .arg("a7")
+      .arg("a8")
+      .arg("a9")
+      .arg("a10")
+      .arg("a11")
+      .arg("a12")
+      .arg("a13")
+      .arg("a14")
+      .arg("a15")
+      .arg("a16")
+      .arg("a17")
+      .arg("a18")
+      .arg("a19")
+  )
+
+  failures = failures + expect("args.len", "$(cmd.args.len())", "20")
+  failures = failures + expect("args.0", cmd.args.at(0).name, "a0")
+  failures = failures + expect("args.19", cmd.args.at(19).name, "a19")
+
+  app = cli.app("demo")
+  count = 0
+  for command in app.commands:
+    count = count + 1
+  failures = failures + expect("app.empty", "$count", "0")
+
+  if failures == 0:
+    out("LONG-CHAIN-OK")
+    return 0
+  out("LONG-CHAIN-FAILURES=$failures")
+  1

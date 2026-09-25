@@ -1,0 +1,62 @@
+# Runtime adapter: reads process argv, handles help/version, binds arguments,
+# and invokes the command handler. This is the only module that touches the OS.
+
+import env
+import io
+import.app as app_model
+import.help as help_model
+import.parser as parser_model
+
+# Process exit codes.
+EXIT_OK = 0
+EXIT_USAGE = 2
+
+# True when `wanted` appears before the `--` separator.
+fn _has(args: list[str], wanted: str) -> bool:
+  found = false
+  index = 0
+  for index < args.len():
+    value = args.at(index)
+    if value == "--":
+      break
+    if value == wanted:
+      found = true
+    index = index + 1
+  found
+
+# Runs against an explicit argument list (testable, no argv access).
+fn run_with(app: app_model.App, args: list[str]) -> int:
+  message = app_model.validate_message(app)
+  if message != "":
+    io.eprintln("error: " + message)
+    return EXIT_USAGE
+  if _has(args, "--version"):
+    out(help_model.version_text(app))
+    return EXIT_OK
+  if _has(args, "-V"):
+    out(help_model.version_text(app))
+    return EXIT_OK
+  if _has(args, "--help"):
+    name = parser_model.command_name(app, args)
+    out(help_model.command_help_text(app, name))
+    return EXIT_OK
+  if _has(args, "-h"):
+    name = parser_model.command_name(app, args)
+    out(help_model.command_help_text(app, name))
+    return EXIT_OK
+  match parser_model.parse(app, args):
+    ok(invocation):
+      invocation.command.handler(invocation.context)
+    err(error):
+      io.eprintln("error: " + error.message)
+      EXIT_USAGE
+
+# Reads the real process arguments (dropping argv[0]) and runs.
+fn run(app: app_model.App) -> int:
+  argv = env.args()
+  rest: list[str] = @[]
+  index = 1
+  for index < argv.len():
+    rest.push(argv.at(index))
+    index = index + 1
+  run_with(app, rest)

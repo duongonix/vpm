@@ -1,0 +1,163 @@
+# Phase 3: pure argument binder coverage.
+
+import cli
+
+fn expect(label: str, actual: str, wanted: str) -> int:
+  if actual == wanted:
+    out("PASS $label")
+    return 0
+  out("FAIL $label: got=[$actual] want=[$wanted]")
+  1
+
+fn bool_text(value: bool) -> str:
+  if value:
+    return "true"
+  "false"
+
+fn main() -> int:
+  failures = 0
+
+  serve = (
+    cli.command("serve", about = "Start server")
+      .alias("s")
+      .arg("path", required = true)
+      .option("port", short = "p", default_value = "3000")
+      .flag("verbose", short = "v")
+      .flag("debug", short = "d")
+  )
+  echo = cli.command("echo").arg("a").arg("b")
+  app = cli.app("demo", version = "0.1.0").command(serve).command(echo)
+
+  # 1. long option with a separate value + short flag + handler callable.
+  match cli.parse(app, @["serve", "./public", "--port", "8080", "-v"]):
+    ok(invocation):
+      ctx = invocation.context
+      failures = failures + expect("c1.command", ctx.command, "serve")
+      failures = failures + expect("c1.path", ctx.arg_or("path", "-"), "./public")
+      failures = failures + expect("c1.port", ctx.option_or("port", "-"), "8080")
+      failures = failures + expect("c1.verbose", bool_text(ctx.flag("verbose")), "true")
+      failures = failures + expect("c1.handler", "$(invocation.command.handler(ctx))", "0")
+    err(error):
+      failures = failures + expect("c1.err", error.message, "")
+
+  # 2. `--option=value`.
+  match cli.parse(app, @["serve", "./p", "--port=9090"]):
+    ok(invocation):
+      failures = failures + expect("c2.port", invocation.context.option_or("port", "-"), "9090")
+    err(error):
+      failures = failures + expect("c2.err", error.message, "")
+
+  # 3. short option with a separate value.
+  match cli.parse(app, @["serve", "./p", "-p", "7070"]):
+    ok(invocation):
+      failures = failures + expect("c3.port", invocation.context.option_or("port", "-"), "7070")
+    err(error):
+      failures = failures + expect("c3.err", error.message, "")
+
+  # 4. short option with an attached value.
+  match cli.parse(app, @["serve", "./p", "-p7071"]):
+    ok(invocation):
+      failures = failures + expect("c4.port", invocation.context.option_or("port", "-"), "7071")
+    err(error):
+      failures = failures + expect("c4.err", error.message, "")
+
+  # 5. command alias.
+  match cli.parse(app, @["s", "./p"]):
+    ok(invocation):
+      failures = failures + expect("c5.command", invocation.context.command, "serve")
+    err(error):
+      failures = failures + expect("c5.err", error.message, "")
+
+  # 6. declared defaults and absent flag.
+  match cli.parse(app, @["serve", "./p"]):
+    ok(invocation):
+      failures = failures + expect("c6.port", invocation.context.option_or("port", "-"), "3000")
+      failures = failures + expect("c6.verbose", bool_text(invocation.context.flag("verbose")), "false")
+    err(error):
+      failures = failures + expect("c6.err", error.message, "")
+
+  # 7. duplicate option: last value wins.
+  match cli.parse(app, @["serve", "./p", "--port", "1", "--port", "2"]):
+    ok(invocation):
+      failures = failures + expect("c7.port", invocation.context.option_or("port", "-"), "2")
+    err(error):
+      failures = failures + expect("c7.err", error.message, "")
+
+  # 8. `--` ends option parsing.
+  match cli.parse(app, @["echo", "--", "-x", "y"]):
+    ok(invocation):
+      failures = failures + expect("c8.a", invocation.context.arg_or("a", "-"), "-x")
+      failures = failures + expect("c8.b", invocation.context.arg_or("b", "-"), "y")
+    err(error):
+      failures = failures + expect("c8.err", error.message, "")
+
+  # 9. missing required positional.
+  match cli.parse(app, @["serve"]):
+    ok(invocation):
+      failures = failures + expect("c9.unexpected-ok", "ok", "err")
+    err(error):
+      failures = failures + expect("c9.missing-arg", bool_text(error.message.contains("missing required argument")), "true")
+
+  # 10. unknown option.
+  match cli.parse(app, @["serve", "./p", "--nope"]):
+    ok(invocation):
+      failures = failures + expect("c10.unexpected-ok", "ok", "err")
+    err(error):
+      failures = failures + expect("c10.unknown-option", bool_text(error.message.contains("unknown option")), "true")
+
+  # 11. option missing its value.
+  match cli.parse(app, @["serve", "./p", "--port"]):
+    ok(invocation):
+      failures = failures + expect("c11.unexpected-ok", "ok", "err")
+    err(error):
+      failures = failures + expect("c11.missing-value", bool_text(error.message.contains("expects a value")), "true")
+
+  # 12. unknown command.
+  match cli.parse(app, @["nope"]):
+    ok(invocation):
+      failures = failures + expect("c12.unexpected-ok", "ok", "err")
+    err(error):
+      failures = failures + expect("c12.unknown-command", bool_text(error.message.contains("unknown command")), "true")
+
+  # 13. a flag given a value.
+  match cli.parse(app, @["serve", "./p", "--verbose=yes"]):
+    ok(invocation):
+      failures = failures + expect("c13.unexpected-ok", "ok", "err")
+    err(error):
+      failures = failures + expect("c13.unexpected-value", bool_text(error.message.contains("does not take a value")), "true")
+
+  # 14. extra positional beyond the declared args.
+  match cli.parse(app, @["echo", "a", "b", "c"]):
+    ok(invocation):
+      failures = failures + expect("c14.unexpected-ok", "ok", "err")
+    err(error):
+      failures = failures + expect("c14.unexpected-arg", bool_text(error.message.contains("unexpected argument")), "true")
+
+  # 15. no command at all.
+  match cli.parse(app, @[]):
+    ok(invocation):
+      failures = failures + expect("c15.unexpected-ok", "ok", "err")
+    err(error):
+      failures = failures + expect("c15.no-command", bool_text(error.message.contains("no command")), "true")
+
+  # 16. combined short flags.
+  match cli.parse(app, @["serve", "./p", "-vd"]):
+    ok(invocation):
+      failures = failures + expect("c16.verbose", bool_text(invocation.context.flag("verbose")), "true")
+      failures = failures + expect("c16.debug", bool_text(invocation.context.flag("debug")), "true")
+    err(error):
+      failures = failures + expect("c16.err", error.message, "")
+
+  # 17. combined short flag + attached option value.
+  match cli.parse(app, @["serve", "./p", "-vp8080"]):
+    ok(invocation):
+      failures = failures + expect("c17.verbose", bool_text(invocation.context.flag("verbose")), "true")
+      failures = failures + expect("c17.port", invocation.context.option_or("port", "-"), "8080")
+    err(error):
+      failures = failures + expect("c17.err", error.message, "")
+
+  if failures == 0:
+    out("PARSE-OK")
+    return 0
+  out("PARSE-FAILURES=$failures")
+  1

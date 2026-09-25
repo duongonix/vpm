@@ -1,0 +1,137 @@
+# Values handed to a command handler.
+#
+# Phase 1 only provides the data model and accessors. The parser that fills
+# these maps arrives in a later phase; the functional `with_*` setters exist so
+# the model can be exercised (and populated) without one.
+
+data Context:
+  command: str
+  args: map[str, str]
+  options: map[str, str]
+  flags: map[str, bool]
+
+fn make(command: str) -> Context:
+  args: map[str, str] = ()
+  options: map[str, str] = ()
+  flags: map[str, bool] = ()
+  Context(
+    command: command,
+    args: args,
+    options: options,
+    flags: flags
+  )
+
+# Builds a context from already-resolved values; used by the argument parser.
+fn of(command: str, args: map[str, str], options: map[str, str], flags: map[str, bool]) -> Context:
+  Context(
+    command: command,
+    args: args,
+    options: options,
+    flags: flags
+  )
+
+# Functional setters: each returns a new `Context`, never mutating the receiver.
+fn Context.with_arg(name: str, value: str) -> Context:
+  args = self.args
+  args.set(name, value)
+  Context(
+    command: self.command,
+    args: args,
+    options: self.options,
+    flags: self.flags
+  )
+
+fn Context.with_option(name: str, value: str) -> Context:
+  options = self.options
+  options.set(name, value)
+  Context(
+    command: self.command,
+    args: self.args,
+    options: options,
+    flags: self.flags
+  )
+
+fn Context.with_flag(name: str, value: bool) -> Context:
+  flags = self.flags
+  flags.set(name, value)
+  Context(
+    command: self.command,
+    args: self.args,
+    options: self.options,
+    flags: flags
+  )
+
+# Read accessors used by handlers.
+fn Context.arg_or(name: str, fallback: str) -> str:
+  self.args.get_or(name, fallback)
+
+fn Context.option_or(name: str, fallback: str) -> str:
+  self.options.get_or(name, fallback)
+
+fn Context.flag(name: str) -> bool:
+  self.flags.get_or(name, false)
+
+# Typed accessors. `str.to_int` saturates (invalid input becomes 0), so the text
+# is validated first and `null` is returned for non-integers.
+fn _is_digit(character: str) -> bool:
+  if character == "0":
+    return true
+  if character == "1":
+    return true
+  if character == "2":
+    return true
+  if character == "3":
+    return true
+  if character == "4":
+    return true
+  if character == "5":
+    return true
+  if character == "6":
+    return true
+  if character == "7":
+    return true
+  if character == "8":
+    return true
+  if character == "9":
+    return true
+  false
+
+fn _is_int_text(text: str) -> bool:
+  if text.byte_len() == 0:
+    return false
+  start = 0
+  if text.substring(0, 1) == "-":
+    if text.byte_len() == 1:
+      return false
+    start = 1
+  valid = true
+  index = start
+  for index < text.byte_len():
+    if not _is_digit(text.substring(index, index + 1)):
+      valid = false
+    index = index + 1
+  valid
+
+fn Context.option_int(name: str) -> int?:
+  text = self.options.get_or(name, "")
+  if _is_int_text(text):
+    return text.to_int()
+  null
+
+fn Context.option_int_or(name: str, fallback: int) -> int:
+  value = self.option_int(name)
+  if value != null:
+    return value
+  fallback
+
+fn Context.arg_int(name: str) -> int?:
+  text = self.args.get_or(name, "")
+  if _is_int_text(text):
+    return text.to_int()
+  null
+
+fn Context.arg_int_or(name: str, fallback: int) -> int:
+  value = self.arg_int(name)
+  if value != null:
+    return value
+  fallback
