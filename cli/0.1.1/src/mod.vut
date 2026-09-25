@@ -1,0 +1,84 @@
+# Public library entry point for the `cli` package.
+#
+# Phase 1: core data model and functional fluent builders.
+# Phase 2: pure argv tokenizer.
+# Phase 3: pure argument binder (`parse`) and its error model.
+# Phase 4: help / usage / version rendering.
+# Phase 5: `run` adapter over process argv.
+# Phase 6: integration test harness and matrix.
+
+import.app as app_model
+import.command as command_model
+import.arg as arg_model
+import.option as option_model
+import.flag as flag_model
+import.context as context_model
+import.error as error_model
+import.help as help_model
+import.parser as parser_model
+import.parser.tokens as tokens_model
+import.run as run_model
+
+type App = app_model.App
+type Command = command_model.Command
+type Arg = arg_model.Arg
+type Option = option_model.Option
+type Flag = flag_model.Flag
+type Context = context_model.Context
+type Error = error_model.Error
+type ErrorKind = error_model.ErrorKind
+type Invocation = parser_model.Invocation
+type Token = tokens_model.Token
+type TokenKind = tokens_model.TokenKind
+
+# Process exit codes used by `run`.
+EXIT_OK = run_model.EXIT_OK
+EXIT_USAGE = run_model.EXIT_USAGE
+
+fn app(name: str, version: str = "", about: str = "") -> App:
+  app_model.make(name, version, about)
+
+fn command(name: str, about: str = "") -> Command:
+  command_model.make(name, about)
+
+fn arg(name: str, about: str = "", required: bool = false, default_value: str = "") -> Arg:
+  arg_model.make(name, about, required, default_value)
+
+fn option(name: str, short: str = "", about: str = "", required: bool = false, default_value: str = "", hidden: bool = false) -> Option:
+  option_model.make(name, short, about, required, default_value, hidden)
+
+fn flag(name: str, short: str = "", about: str = "", hidden: bool = false) -> Flag:
+  flag_model.make(name, short, about, hidden)
+
+fn context(command: str = "") -> Context:
+  context_model.make(command)
+
+# Syntactic argv tokenizer (Phase 2).
+fn tokenize(args: list[str]) -> list[Token]:
+  tokens_model.tokenize(args)
+
+# Resolves the subcommand and binds its arguments, options, and flags (Phase 3).
+fn parse(app: App, args: list[str]) -> result[Invocation, Error]:
+  parser_model.parse(app, args)
+
+# Validates command/option/flag definitions (Phase 8).
+fn validate(app: App) -> result[unit, Error]:
+  app_model.validate(app)
+
+# Rendered help / usage / version text (Phase 4).
+fn help_text(app: App) -> str:
+  help_model.help_text(app)
+
+fn command_help_text(app: App, name: str) -> str:
+  help_model.command_help_text(app, name)
+
+fn version_text(app: App) -> str:
+  help_model.version_text(app)
+
+# Runs against an explicit argument list; returns the process exit code.
+fn run_with(app: App, args: list[str]) -> int:
+  run_model.run_with(app, args)
+
+# Reads process argv and runs (Phase 5).
+fn run(app: App) -> int:
+  run_model.run(app)

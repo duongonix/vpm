@@ -1,0 +1,127 @@
+# Command specification and its functional fluent builder.
+
+import.arg as arg_model
+import.option as option_model
+import.flag as flag_model
+import.context as context_model
+
+# Default handler, replaced by `handle`.
+fn _noop(ctx: context_model.Context) -> int:
+  0
+
+data Command:
+  name: str
+  about: str
+  aliases: list[str]
+  hidden: bool
+  args: list[arg_model.Arg]
+  options: list[option_model.Option]
+  flags: list[flag_model.Flag]
+  handler: fn(context_model.Context) -> int
+
+fn make(name: str, about: str) -> Command:
+  Command(
+    name: name,
+    about: about,
+    aliases: @[],
+    hidden: false,
+    args: @[],
+    options: @[],
+    flags: @[],
+    handler: _noop
+  )
+
+# Every builder copies the field it changes, mutates that copy, and constructs a
+# new `Command`. The receiver is never mutated, so base/derived values stay
+# independent. Do not replace this with `local = self; local.field.mutate(...)`.
+fn Command.about(text: str) -> Command:
+  Command(
+    name: self.name,
+    about: text,
+    aliases: self.aliases,
+    hidden: self.hidden,
+    args: self.args,
+    options: self.options,
+    flags: self.flags,
+    handler: self.handler
+  )
+
+fn Command.alias(name: str) -> Command:
+  aliases = self.aliases
+  aliases.push(name)
+  Command(
+    name: self.name,
+    about: self.about,
+    aliases: aliases,
+    hidden: self.hidden,
+    args: self.args,
+    options: self.options,
+    flags: self.flags,
+    handler: self.handler
+  )
+
+fn Command.hidden(value: bool = true) -> Command:
+  Command(
+    name: self.name,
+    about: self.about,
+    aliases: self.aliases,
+    hidden: value,
+    args: self.args,
+    options: self.options,
+    flags: self.flags,
+    handler: self.handler
+  )
+
+fn Command.arg(name: str, about: str = "", required: bool = false, default_value: str = "") -> Command:
+  args = self.args
+  args.push(arg_model.make(name, about, required, default_value))
+  Command(
+    name: self.name,
+    about: self.about,
+    aliases: self.aliases,
+    hidden: self.hidden,
+    args: args,
+    options: self.options,
+    flags: self.flags,
+    handler: self.handler
+  )
+
+fn Command.option(name: str, short: str = "", about: str = "", required: bool = false, default_value: str = "", hidden: bool = false) -> Command:
+  options = self.options
+  options.push(option_model.make(name, short, about, required, default_value, hidden))
+  Command(
+    name: self.name,
+    about: self.about,
+    aliases: self.aliases,
+    hidden: self.hidden,
+    args: self.args,
+    options: options,
+    flags: self.flags,
+    handler: self.handler
+  )
+
+fn Command.flag(name: str, short: str = "", about: str = "", hidden: bool = false) -> Command:
+  flags = self.flags
+  flags.push(flag_model.make(name, short, about, hidden))
+  Command(
+    name: self.name,
+    about: self.about,
+    aliases: self.aliases,
+    hidden: self.hidden,
+    args: self.args,
+    options: self.options,
+    flags: flags,
+    handler: self.handler
+  )
+
+fn Command.handle(f: fn(context_model.Context) -> int) -> Command:
+  Command(
+    name: self.name,
+    about: self.about,
+    aliases: self.aliases,
+    hidden: self.hidden,
+    args: self.args,
+    options: self.options,
+    flags: self.flags,
+    handler: f
+  )

@@ -1,0 +1,99 @@
+# Pure argv tokenizer.
+#
+# Tokenization is syntactic: it recognizes `--long`, `--long=value`, short
+# clusters like `-pv`, `--` and positionals. Whether a short cluster is a flag
+# cluster or an option with an attached value depends on the command spec and is
+# decided by the binder in `parser/mod.vut`.
+
+enum TokenKind:
+  long
+  short
+  positional
+  separator
+
+data Token:
+  kind: TokenKind
+  name: str
+  value: str
+  raw: str
+  has_value: bool
+
+fn Token.is_long() -> bool:
+  match self.kind:
+    long: true
+    _: false
+
+fn Token.is_short() -> bool:
+  match self.kind:
+    short: true
+    _: false
+
+fn Token.is_separator() -> bool:
+  match self.kind:
+    separator: true
+    _: false
+
+fn Token.is_positional() -> bool:
+  match self.kind:
+    positional: true
+    _: false
+
+fn _long(name: str, value: str, raw: str, has_value: bool) -> Token:
+  Token(
+    kind: TokenKind.long,
+    name: name,
+    value: value,
+    raw: raw,
+    has_value: has_value
+  )
+
+fn _short(name: str, raw: str) -> Token:
+  Token(
+    kind: TokenKind.short,
+    name: name,
+    value: "",
+    raw: raw,
+    has_value: false
+  )
+
+fn _positional(value: str) -> Token:
+  Token(
+    kind: TokenKind.positional,
+    name: "",
+    value: value,
+    raw: value,
+    has_value: false
+  )
+
+fn _separator() -> Token:
+  Token(
+    kind: TokenKind.separator,
+    name: "",
+    value: "",
+    raw: "--",
+    has_value: false
+  )
+
+fn tokenize(args: list[str]) -> list[Token]:
+  tokens: list[Token] = @[]
+  after_separator = false
+  for arg in args:
+    if after_separator:
+      tokens.push(_positional(arg))
+    elif arg == "--":
+      tokens.push(_separator())
+      after_separator = true
+    elif arg.starts_with("--"):
+      equals = arg.find("=")
+      if equals >= 0:
+        tokens.push(_long(arg.substring(2, equals), arg.substring(equals + 1, arg.byte_len()), arg, true))
+      else:
+        tokens.push(_long(arg.substring(2, arg.byte_len()), "", arg, false))
+    elif arg.starts_with("-"):
+      if arg.byte_len() > 1:
+        tokens.push(_short(arg.substring(1, arg.byte_len()), arg))
+      else:
+        tokens.push(_positional(arg))
+    else:
+      tokens.push(_positional(arg))
+  tokens

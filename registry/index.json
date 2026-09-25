@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "packages": [
+    {
+      "schemaVersion": 1,
+      "name": "cli",
+      "description": "Declarative, type-safe command-line framework for Vut",
+      "owner": "duongonix",
+      "latestVersion": "0.1.1",
+      "keywords": [
+        "cli",
+        "command-line",
+        "framework"
+      ],
+      "repository": "https://github.com/duongonix/vpm",
+      "source": {
+        "provider": "github",
+        "repository": "duongonix/vpm",
+        "path": "cli"
+      },
+      "authors": [
+        "Vut contributors"
+      ],
+      "license": "MIT"
+    }
+  ]
+}

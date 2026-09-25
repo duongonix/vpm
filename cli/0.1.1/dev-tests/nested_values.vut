@@ -1,0 +1,55 @@
+# Nested managed values must survive a long fluent chain without corruption.
+
+import cli
+
+fn expect(label: str, actual: str, wanted: str) -> int:
+  if actual == wanted:
+    out("PASS $label")
+    return 0
+  out("FAIL $label: got=[$actual] want=[$wanted]")
+  1
+
+fn bool_text(value: bool) -> str:
+  if value:
+    return "true"
+  "false"
+
+fn main() -> int:
+  failures = 0
+
+  cmd = (
+    cli.command("serve", about = "Start")
+      .arg("path", about = "Path", default_value = ".")
+      .arg("host", about = "Host", default_value = "localhost")
+      .arg("mode", about = "Mode", required = true)
+      .option("port", short = "p", default_value = "3000")
+      .option("timeout", short = "t", default_value = "30")
+      .flag("verbose", short = "v")
+      .flag("debug", short = "d")
+  )
+
+  failures = failures + expect("args.len", "$(cmd.args.len())", "3")
+  failures = failures + expect("args.0.name", cmd.args.at(0).name, "path")
+  failures = failures + expect("args.1.name", cmd.args.at(1).name, "host")
+  failures = failures + expect("args.1.default", cmd.args.at(1).default_value, "localhost")
+  failures = failures + expect("args.2.required", bool_text(cmd.args.at(2).required), "true")
+  failures = failures + expect("options.len", "$(cmd.options.len())", "2")
+  failures = failures + expect("options.0.short", cmd.options.at(0).short, "p")
+  failures = failures + expect("options.1.name", cmd.options.at(1).name, "timeout")
+  failures = failures + expect("options.1.default", cmd.options.at(1).default_value, "30")
+  failures = failures + expect("flags.len", "$(cmd.flags.len())", "2")
+  failures = failures + expect("flags.0.name", cmd.flags.at(0).name, "verbose")
+  failures = failures + expect("flags.1.short", cmd.flags.at(1).short, "d")
+  failures = failures + expect("about", cmd.about, "Start")
+
+  # A second independent command built from the same starting point is unaffected.
+  other = cli.command("build").flag("release", short = "r")
+  failures = failures + expect("other.flags.len", "$(other.flags.len())", "1")
+  failures = failures + expect("other.flags.0", other.flags.at(0).name, "release")
+  failures = failures + expect("cmd.flags.still", "$(cmd.flags.len())", "2")
+
+  if failures == 0:
+    out("NESTED-VALUES-OK")
+    return 0
+  out("NESTED-VALUES-FAILURES=$failures")
+  1

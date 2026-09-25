@@ -1,0 +1,9 @@
+[package]
+name = "cli"
+version = "0.1.1"
+description = "Declarative, type-safe command-line framework for Vut"
+authors = ["Vut contributors"]
+license = "MIT"
+keywords = ["cli", "command-line", "framework"]
+
+[dependencies]

@@ -3,7 +3,7 @@
   "name": "cli",
   "description": "Declarative, type-safe command-line framework for Vut",
   "owner": "duongonix",
-  "latestVersion": "0.1.0",
+  "latestVersion": "0.1.1",
   "keywords": [
     "cli",
     "command-line",
@@ -20,6 +20,9 @@
   ],
   "license": "MIT",
   "versions": [
+    {
+      "version": "0.1.1"
+    },
     {
       "version": "0.1.0"
     }
