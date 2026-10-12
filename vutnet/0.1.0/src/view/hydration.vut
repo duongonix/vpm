@@ -1,0 +1,36 @@
+# Public, target-neutral descriptor shared by server SSR and browser WASM.
+# The call-site ID is compile-time identity; occurrence is assigned after the
+# final View tree (including components, slots, and loop iterations) is built.
+data HydrationPlanInput:
+  _site_id: u64
+  _parent: int
+  _kind: str
+  _name: str
+
+@abi_schema(1)
+data HydrationPlanEntry:
+  _site_id: u64
+  _occurrence: int
+  _parent: int
+  _kind: str
+  _name: str
+
+# Shared plan generation is isolated from the large View builder module. The
+# input is already flattened, so this assigns occurrences in deterministic tree
+# order and keeps counters independent for each static source site.
+fn occurrence_plan(nodes: list[HydrationPlanInput]) -> list[HydrationPlanEntry]:
+  counts: map[u64, int] = ()
+  plan: list[HydrationPlanEntry] = @[]
+  for node in nodes:
+    occurrence = counts.get_or(node._site_id, 0)
+    counts.set(node._site_id, occurrence + 1)
+    plan.push(
+      HydrationPlanEntry(
+        _site_id: node._site_id,
+        _occurrence: occurrence,
+        _parent: node._parent,
+        _kind: node._kind,
+        _name: node._name
+      )
+    )
+  plan

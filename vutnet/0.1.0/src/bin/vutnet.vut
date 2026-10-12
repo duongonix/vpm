@@ -1,0 +1,5 @@
+import .. cli at run
+import env
+
+fn main() -> int:
+  run(env.args()).to_int()

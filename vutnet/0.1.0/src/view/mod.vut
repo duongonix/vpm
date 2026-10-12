@@ -1,0 +1,1798 @@
+# Vutnet View builder. Receiver methods live beside ChildrenScope because the
+# current compiler only permits receiver extensions in the receiver's module.
+import.event_types at EventHandlers, EventHandler, MouseEventHandler, InputEventHandler, ChangeEventHandler, KeyboardEventHandler, FocusEventHandler, SubmitEventHandler, event_handlers
+import.tracking at initial_value
+import.hydration at HydrationPlanEntry, HydrationPlanInput, occurrence_plan
+
+data Attribute:
+  _name: str
+  _value: str
+  _is_boolean: bool
+  _enabled: bool
+  _is_css: bool
+
+type _TextBinding = fn() -> str
+type _AttrsBinding = fn() -> list[Attribute]
+type _ChildrenBinding = fn() -> View
+
+@abi_schema(3)
+data ViewNode:
+  _is_text: bool
+  _is_slot: bool
+  _required_slot: bool
+  _parent: int
+  _name: str
+  _slot_name: str
+  _text: str
+  _attrs: list[Attribute]
+  _events: EventHandlers
+  _call_site_id: u64
+  _text_binding: _TextBinding? = null
+  _attrs_binding: _AttrsBinding? = null
+  _base_attrs: list[Attribute] = @[]
+  _children_binding: _ChildrenBinding? = null
+
+@abi_schema(4)
+data View:
+  _nodes: list[ViewNode]
+  _hydration_plan: list[HydrationPlanEntry] = @[]
+  # Error text is part of the public managed browser callback layout; the
+  # native SSR path still returns the same typed result[str, str].
+  _layout_error: str? = null
+
+# The managed SSR import deliberately receives a callback-free projection.
+# Browser-only event closures remain on ViewNode and never cross the native
+# renderer boundary.
+@abi_schema(2)
+data ViewRenderNode:
+  _is_text: bool
+  _is_slot: bool
+  _required_slot: bool
+  _parent: int
+  _name: str
+  _slot_name: str
+  _text: str
+  _attrs: list[Attribute]
+  _call_site_id: u64
+
+@abi_schema(4)
+data ViewRender:
+  _nodes: list[ViewRenderNode]
+  _include_call_site_markers: bool
+  _include_bootstrap: bool
+  _bootstrap_has_data: bool
+  _bootstrap_json: str
+  _bootstrap_page_id: u64
+  _hydration_plan: list[HydrationPlanEntry]
+
+data _SlotSupply:
+  _name: str
+  _content: View
+
+type _Layout = fn() -> View
+
+enum _ViewError:
+  missing_required_slot
+  duplicate_slot
+  unknown_slot
+  invalid_slot_name
+  unresolved_nested_slot
+  slot_without_layout
+  nested_render_failure
+
+fn _ViewError.message() -> str:
+  match self:
+    missing_required_slot: "missing required view slot"
+    duplicate_slot: "duplicate view slot"
+    unknown_slot: "unknown view slot"
+    invalid_slot_name: "invalid view slot name"
+    unresolved_nested_slot: "unresolved nested view slot"
+    slot_without_layout: "view declares slots but has no layout"
+    nested_render_failure: "nested view failed to resolve its layout"
+
+extern "VutManaged" fn _view_render_native(value: ViewRender) -> result[str, str]
+
+data ChildrenScope:
+  _nodes: list[ViewNode]
+  _parent: int
+  _collect_slot_supplies: bool
+  _supplies: list[_SlotSupply]
+  # Keep only error presence here; View carries the typed error at the boundary.
+  _has_error: bool
+  _allows_children_binding: bool = false
+  _children_binding: _ChildrenBinding? = null
+  _attrs_binding: _AttrsBinding? = null
+  _dynamic_attrs: list[Attribute] = @[]
+
+fn attr(name: str, value: str) -> Attribute:
+  Attribute(_name: name, _value: value, _is_boolean: false, _enabled: true, _is_css: false)
+
+fn bool_attr(name: str, enabled: bool) -> Attribute:
+  Attribute(_name: name, _value: "", _is_boolean: true, _enabled: enabled, _is_css: false)
+
+# Optional shortcuts are normalized into the same Attribute list consumed by
+# ViewNode and the native HTML validator/serializer.
+fn _add_text_attribute(output: list[Attribute], name: str, value: str?) -> list[Attribute]:
+  if value != null:
+    output.push(attr(name, value))
+  output
+
+fn _add_numeric_attribute(output: list[Attribute], name: str, value: int?) -> list[Attribute]:
+  if value != null:
+    output.push(attr(name, "$value"))
+  output
+
+fn _add_boolean_attribute(output: list[Attribute], name: str, value: bool) -> list[Attribute]:
+  if value:
+    output.push(bool_attr(name, true))
+  output
+
+fn _add_custom_attributes(output: list[Attribute], values: list[Attribute]) -> list[Attribute]:
+  for value in values:
+    output.push(value)
+  output
+
+fn _css_attribute(name: str, value: str) -> Attribute:
+  Attribute(_name: name, _value: value, _is_boolean: false, _enabled: true, _is_css: true)
+
+fn _add_css_attributes(output: list[Attribute], css: map[str, str]) -> list[Attribute]:
+  keys = css.keys()
+  for name in keys:
+    output.push(_css_attribute(name, css.get_or(name, "")))
+  output
+
+fn _prefer_error(current: str?, next: str?) -> str?:
+  preferred: str? = next
+  if current != null:
+    preferred = current
+  preferred
+
+fn _first_supply_error(supplies: list[_SlotSupply]) -> str?:
+  found: str? = null
+  for supply in supplies:
+    found = _prefer_error(found, supply._content._layout_error)
+  found
+
+# `view()` builds a page or a layout template. A layout passed to an overload
+# below is invoked and its slots are resolved inside this module.
+fn view(body: fn(ChildrenScope)() -> void) -> View:
+  _assign_occurrences(_view_without_layout(body))
+
+fn view(layout: _Layout, body: fn(ChildrenScope)() -> void) -> View:
+  _assign_occurrences(_view_with_layout(layout(), body))
+
+fn view(layout: View, body: fn(ChildrenScope)() -> void) -> View:
+  _assign_occurrences(_view_with_layout(layout, body))
+
+# Assign a deterministic per-site occurrence after all fragments/components/
+# layout slots have been flattened. The same function runs in native and WASM.
+fn _assign_occurrences(value: View) -> View:
+  if value._layout_error != null:
+    return value
+  inputs: list[HydrationPlanInput] = @[]
+  for node in value._nodes:
+    kind = if node._is_text:
+      "text"
+    else:
+      "element"
+    inputs.push(
+      HydrationPlanInput(
+        _site_id: node._call_site_id,
+        _parent: node._parent,
+        _kind: kind,
+        _name: node._name
+      )
+    )
+  View(_nodes: value._nodes, _hydration_plan: occurrence_plan(inputs))
+
+fn _view_without_layout(body: fn(ChildrenScope)() -> void) -> View:
+  nodes: list[ViewNode] = @[]
+  scope = ChildrenScope(
+    _nodes: nodes,
+    _parent: -1,
+    _collect_slot_supplies: false,
+    _supplies: @[],
+    _has_error: false
+  )
+  body.call(scope)
+  if scope._has_error:
+    return View(_nodes: @[], _layout_error: _ViewError.nested_render_failure.message())
+  View(_nodes: scope._nodes)
+
+fn _view_with_layout(template: View, body: fn(ChildrenScope)() -> void) -> View:
+  nodes: list[ViewNode] = @[]
+  supplies: list[_SlotSupply] = @[]
+  scope = ChildrenScope(
+    _nodes: nodes,
+    _parent: -1,
+    _collect_slot_supplies: true,
+    _supplies: supplies,
+    _has_error: false
+  )
+  body.call(scope)
+  if scope._has_error:
+    return View(_nodes: @[], _layout_error: _ViewError.nested_render_failure.message())
+  if scope._nodes.len() > 0:
+    scope._supplies.push(
+      _SlotSupply(_name: "content", _content: View(_nodes: scope._nodes))
+    )
+  match _resolve(template, scope._supplies):
+    ok(resolved): resolved
+    err(error): View(_nodes: @[], _layout_error: error)
+
+fn ChildrenScope._push(node: ViewNode) -> void:
+  if self._children_binding != null:
+    self._has_error = true
+  else:
+    self._nodes.push(node)
+
+fn ChildrenScope._node_count() -> int:
+  self._nodes.len()
+
+@track_caller
+fn ChildrenScope.text(value: str) -> void:
+  self._push(
+    ViewNode(
+      _is_text: true,
+      _is_slot: false,
+      _required_slot: false,
+      _parent: self._parent,
+      _name: "",
+      _slot_name: "",
+      _text: value,
+      _attrs: @[],
+      _events: EventHandlers(),
+      _call_site_id: caller_call_site_id()
+    )
+  )
+
+# Typed binding methods stay beside ChildrenScope for receiver resolution;
+# dependency isolation and browser scheduling live in focused modules.
+@track_caller
+fn ChildrenScope.text(value: _TextBinding) -> void:
+  if self._children_binding != null:
+    self._has_error = true
+    return
+  evaluated = initial_value[str](value)
+  self.text(evaluated)
+  node = self._nodes.at(self._nodes.len() - 1)
+  node._text_binding = value
+  self._nodes.set(self._nodes.len() - 1, node)
+
+fn ChildrenScope.bind_attrs(value: _AttrsBinding) -> void:
+  if self._nodes.len() == 0:
+    if not self._allows_children_binding or self._attrs_binding != null:
+      self._has_error = true
+      return
+    self._dynamic_attrs = initial_value[list[Attribute]](value)
+    self._attrs_binding = value
+    return
+  index = self._nodes.len() - 1
+  node = self._nodes.at(index)
+  if node._is_text or node._is_slot or node._attrs_binding != null:
+    self._has_error = true
+    return
+  node._base_attrs = node._attrs
+  node._attrs = _add_custom_attributes(node._attrs, initial_value[list[Attribute]](value))
+  node._attrs_binding = value
+  self._nodes.set(index, node)
+
+fn ChildrenScope.children(value: _ChildrenBinding) -> void:
+  if not self._allows_children_binding or self._nodes.len() != 0 or self._children_binding != null:
+    self._has_error = true
+    return
+  self.child(initial_value[View](value))
+  self._children_binding = value
+
+# Insert component roots and remap local parent indices into this flat preorder
+# table. This preserves order and supports components with multiple roots.
+fn ChildrenScope.child(value: View) -> void:
+  if value._layout_error != null:
+    self._has_error = true
+  base = self._node_count()
+  for node in value._nodes:
+    parent = if node._parent < 0:
+      self._parent
+    else:
+      base + node._parent
+    self._push(
+      ViewNode(
+        _is_text: node._is_text,
+        _is_slot: node._is_slot,
+        _required_slot: node._required_slot,
+        _parent: parent,
+        _name: node._name,
+        _slot_name: node._slot_name,
+        _text: node._text,
+        _attrs: node._attrs,
+        _events: node._events,
+        _call_site_id: node._call_site_id,
+        _text_binding: node._text_binding,
+        _attrs_binding: node._attrs_binding,
+        _base_attrs: node._base_attrs,
+        _children_binding: node._children_binding
+      )
+    )
+
+@track_caller
+fn ChildrenScope._append_element(
+  name: str,
+  attrs: list[Attribute],
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  self._append_element_with_events(name, attrs, EventHandlers(), body)
+
+@track_caller
+fn ChildrenScope._append_element_with_events(
+  name: str,
+  attrs: list[Attribute],
+  events: EventHandlers,
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  index = self._node_count()
+  nodes: list[ViewNode] = @[]
+  child_scope = ChildrenScope(
+    _nodes: nodes,
+    _parent: -1,
+    _collect_slot_supplies: false,
+    _supplies: @[],
+    _has_error: false,
+    _allows_children_binding: true
+  )
+  body.call(child_scope)
+  if child_scope._has_error:
+    self._has_error = true
+  self._push(
+    ViewNode(
+      _is_text: false,
+      _is_slot: false,
+      _required_slot: false,
+      _parent: self._parent,
+      _name: name,
+      _slot_name: "",
+      _text: "",
+      _attrs: _add_custom_attributes(attrs, child_scope._dynamic_attrs),
+      _events: events,
+      _call_site_id: caller_call_site_id(),
+      _children_binding: child_scope._children_binding,
+      _attrs_binding: child_scope._attrs_binding,
+      _base_attrs: attrs
+    )
+  )
+  base = self._node_count()
+  for node in child_scope._nodes:
+    parent = if node._parent < 0:
+      index
+    else:
+      base + node._parent
+    self._push(
+      ViewNode(
+        _is_text: node._is_text,
+        _is_slot: node._is_slot,
+        _required_slot: node._required_slot,
+        _parent: parent,
+        _name: node._name,
+        _slot_name: node._slot_name,
+        _text: node._text,
+        _attrs: node._attrs,
+        _events: node._events,
+        _call_site_id: node._call_site_id,
+        _text_binding: node._text_binding,
+        _attrs_binding: node._attrs_binding,
+        _base_attrs: node._base_attrs,
+        _children_binding: node._children_binding
+      )
+    )
+
+@track_caller
+fn ChildrenScope._append_void(name: str, attrs: list[Attribute]) -> void:
+  self._append_void_with_events(name, attrs, EventHandlers())
+
+@track_caller
+fn ChildrenScope._append_void_with_events(
+  name: str,
+  attrs: list[Attribute],
+  events: EventHandlers
+) -> void:
+  self._push(
+    ViewNode(
+      _is_text: false,
+      _is_slot: false,
+      _required_slot: false,
+      _parent: self._parent,
+      _name: name,
+      _slot_name: "",
+      _text: "",
+      _attrs: attrs,
+      _events: events,
+      _call_site_id: caller_call_site_id()
+    )
+  )
+
+@track_caller
+fn ChildrenScope.html(
+  id: str? = null,
+  class: str? = null,
+  lang: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_text_attribute(attributes, "lang", lang)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("html", attributes, body)
+
+@track_caller
+fn ChildrenScope.head(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("head", attributes, body)
+
+@track_caller
+fn ChildrenScope.body(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("body", attributes, body)
+
+@track_caller
+fn ChildrenScope.div(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("div", attributes, body)
+
+@track_caller
+fn ChildrenScope.span(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("span", attributes, body)
+
+@track_caller
+fn ChildrenScope.header(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("header", attributes, body)
+
+@track_caller
+fn ChildrenScope.footer(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("footer", attributes, body)
+
+@track_caller
+fn ChildrenScope.main(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("main", attributes, body)
+
+@track_caller
+fn ChildrenScope.section(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("section", attributes, body)
+
+@track_caller
+fn ChildrenScope.article(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("article", attributes, body)
+
+@track_caller
+fn ChildrenScope.aside(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("aside", attributes, body)
+
+@track_caller
+fn ChildrenScope.nav(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("nav", attributes, body)
+
+@track_caller
+fn ChildrenScope.h1(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("h1", attributes, body)
+
+@track_caller
+fn ChildrenScope.h2(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("h2", attributes, body)
+
+@track_caller
+fn ChildrenScope.h3(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("h3", attributes, body)
+
+@track_caller
+fn ChildrenScope.h4(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("h4", attributes, body)
+
+@track_caller
+fn ChildrenScope.h5(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("h5", attributes, body)
+
+@track_caller
+fn ChildrenScope.h6(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("h6", attributes, body)
+
+@track_caller
+fn ChildrenScope.p(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("p", attributes, body)
+
+@track_caller
+fn ChildrenScope.strong(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("strong", attributes, body)
+
+@track_caller
+fn ChildrenScope.em(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("em", attributes, body)
+
+@track_caller
+fn ChildrenScope.small(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("small", attributes, body)
+
+@track_caller
+fn ChildrenScope.blockquote(
+  id: str? = null,
+  class: str? = null,
+  cite: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_text_attribute(attributes, "cite", cite)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("blockquote", attributes, body)
+
+@track_caller
+fn ChildrenScope.pre(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("pre", attributes, body)
+
+@track_caller
+fn ChildrenScope.code(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("code", attributes, body)
+
+@track_caller
+fn ChildrenScope.a(
+  id: str? = null,
+  class: str? = null,
+  href: str? = null,
+  target: str? = null,
+  rel: str? = null,
+  download: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_text_attribute(attributes, "href", href)
+  attributes = _add_text_attribute(attributes, "target", target)
+  attributes = _add_text_attribute(attributes, "rel", rel)
+  attributes = _add_text_attribute(attributes, "download", download)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("a", attributes, body)
+
+@track_caller
+fn ChildrenScope.ul(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("ul", attributes, body)
+
+@track_caller
+fn ChildrenScope.ol(
+  id: str? = null,
+  class: str? = null,
+  start: int? = null,
+  reversed: bool = false,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_numeric_attribute(attributes, "start", start)
+  attributes = _add_boolean_attribute(attributes, "reversed", reversed)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("ol", attributes, body)
+
+@track_caller
+fn ChildrenScope.li(
+  id: str? = null,
+  class: str? = null,
+  value: int? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_numeric_attribute(attributes, "value", value)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("li", attributes, body)
+
+@track_caller
+fn ChildrenScope.button(
+  id: str? = null,
+  class: str? = null,
+  button_type: str? = null,
+  name: str? = null,
+  value: str? = null,
+  disabled: bool = false,
+  on_click: MouseEventHandler? = null,
+  on_focus: FocusEventHandler? = null,
+  on_blur: FocusEventHandler? = null,
+  on_key_down: KeyboardEventHandler? = null,
+  on_key_up: KeyboardEventHandler? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_text_attribute(attributes, "type", button_type)
+  attributes = _add_text_attribute(attributes, "name", name)
+  attributes = _add_text_attribute(attributes, "value", value)
+  attributes = _add_boolean_attribute(attributes, "disabled", disabled)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element_with_events(
+    "button",
+    attributes,
+    event_handlers(
+      on_click = on_click,
+      on_focus = on_focus,
+      on_blur = on_blur,
+      on_key_down = on_key_down,
+      on_key_up = on_key_up
+    ),
+    body
+  )
+
+@track_caller
+fn ChildrenScope.form(
+  id: str? = null,
+  class: str? = null,
+  action: str? = null,
+  method: str? = null,
+  enctype: str? = null,
+  autocomplete: str? = null,
+  novalidate: bool = false,
+  on_submit: SubmitEventHandler? = null,
+  on_reset: EventHandler? = null,
+  on_invalid: EventHandler? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_text_attribute(attributes, "action", action)
+  attributes = _add_text_attribute(attributes, "method", method)
+  attributes = _add_text_attribute(attributes, "enctype", enctype)
+  attributes = _add_text_attribute(attributes, "autocomplete", autocomplete)
+  attributes = _add_boolean_attribute(attributes, "novalidate", novalidate)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element_with_events(
+    "form",
+    attributes,
+    event_handlers(on_submit = on_submit, on_reset = on_reset, on_invalid = on_invalid),
+    body
+  )
+
+@track_caller
+fn ChildrenScope.textarea(
+  id: str? = null,
+  class: str? = null,
+  name: str? = null,
+  placeholder: str? = null,
+  rows: int? = null,
+  cols: int? = null,
+  required: bool = false,
+  disabled: bool = false,
+  readonly: bool = false,
+  minlength: int? = null,
+  maxlength: int? = null,
+  on_input: InputEventHandler? = null,
+  on_change: ChangeEventHandler? = null,
+  on_focus: FocusEventHandler? = null,
+  on_blur: FocusEventHandler? = null,
+  on_key_down: KeyboardEventHandler? = null,
+  on_key_up: KeyboardEventHandler? = null,
+  on_select: EventHandler? = null,
+  on_invalid: EventHandler? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_text_attribute(attributes, "name", name)
+  attributes = _add_text_attribute(attributes, "placeholder", placeholder)
+  attributes = _add_numeric_attribute(attributes, "rows", rows)
+  attributes = _add_numeric_attribute(attributes, "cols", cols)
+  attributes = _add_boolean_attribute(attributes, "required", required)
+  attributes = _add_boolean_attribute(attributes, "disabled", disabled)
+  attributes = _add_boolean_attribute(attributes, "readonly", readonly)
+  attributes = _add_numeric_attribute(attributes, "minlength", minlength)
+  attributes = _add_numeric_attribute(attributes, "maxlength", maxlength)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element_with_events(
+    "textarea",
+    attributes,
+    event_handlers(
+      on_input = on_input,
+      on_change = on_change,
+      on_focus = on_focus,
+      on_blur = on_blur,
+      on_key_down = on_key_down,
+      on_key_up = on_key_up,
+      on_select = on_select,
+      on_invalid = on_invalid
+    ),
+    body
+  )
+
+@track_caller
+fn ChildrenScope.label(
+  id: str? = null,
+  class: str? = null,
+  for_id: str? = null,
+  on_click: MouseEventHandler? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_text_attribute(attributes, "for", for_id)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element_with_events("label", attributes, event_handlers(on_click = on_click), body)
+
+@track_caller
+fn ChildrenScope.select(
+  id: str? = null,
+  class: str? = null,
+  name: str? = null,
+  required: bool = false,
+  disabled: bool = false,
+  multiple: bool = false,
+  on_change: ChangeEventHandler? = null,
+  on_input: InputEventHandler? = null,
+  on_focus: FocusEventHandler? = null,
+  on_blur: FocusEventHandler? = null,
+  on_invalid: EventHandler? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_text_attribute(attributes, "name", name)
+  attributes = _add_boolean_attribute(attributes, "required", required)
+  attributes = _add_boolean_attribute(attributes, "disabled", disabled)
+  attributes = _add_boolean_attribute(attributes, "multiple", multiple)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element_with_events(
+    "select",
+    attributes,
+    event_handlers(
+      on_change = on_change,
+      on_input = on_input,
+      on_focus = on_focus,
+      on_blur = on_blur,
+      on_invalid = on_invalid
+    ),
+    body
+  )
+
+@track_caller
+fn ChildrenScope.option(
+  id: str? = null,
+  class: str? = null,
+  value: str? = null,
+  selected: bool = false,
+  disabled: bool = false,
+  on_click: MouseEventHandler? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_text_attribute(attributes, "value", value)
+  attributes = _add_boolean_attribute(attributes, "selected", selected)
+  attributes = _add_boolean_attribute(attributes, "disabled", disabled)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element_with_events("option", attributes, event_handlers(on_click = on_click), body)
+
+@track_caller
+fn ChildrenScope.table(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("table", attributes, body)
+
+@track_caller
+fn ChildrenScope.caption(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("caption", attributes, body)
+
+@track_caller
+fn ChildrenScope.thead(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("thead", attributes, body)
+
+@track_caller
+fn ChildrenScope.tbody(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("tbody", attributes, body)
+
+@track_caller
+fn ChildrenScope.tfoot(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("tfoot", attributes, body)
+
+@track_caller
+fn ChildrenScope.tr(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("tr", attributes, body)
+
+@track_caller
+fn ChildrenScope.th(
+  id: str? = null,
+  class: str? = null,
+  colspan: int? = null,
+  rowspan: int? = null,
+  scope: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_numeric_attribute(attributes, "colspan", colspan)
+  attributes = _add_numeric_attribute(attributes, "rowspan", rowspan)
+  attributes = _add_text_attribute(attributes, "scope", scope)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("th", attributes, body)
+
+@track_caller
+fn ChildrenScope.td(
+  id: str? = null,
+  class: str? = null,
+  colspan: int? = null,
+  rowspan: int? = null,
+  headers: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_numeric_attribute(attributes, "colspan", colspan)
+  attributes = _add_numeric_attribute(attributes, "rowspan", rowspan)
+  attributes = _add_text_attribute(attributes, "headers", headers)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("td", attributes, body)
+
+@track_caller
+fn ChildrenScope.audio(
+  id: str? = null,
+  class: str? = null,
+  src: str? = null,
+  controls: bool = false,
+  autoplay: bool = false,
+  loop: bool = false,
+  muted: bool = false,
+  preload: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_text_attribute(attributes, "src", src)
+  attributes = _add_boolean_attribute(attributes, "controls", controls)
+  attributes = _add_boolean_attribute(attributes, "autoplay", autoplay)
+  attributes = _add_boolean_attribute(attributes, "loop", loop)
+  attributes = _add_boolean_attribute(attributes, "muted", muted)
+  attributes = _add_text_attribute(attributes, "preload", preload)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("audio", attributes, body)
+
+@track_caller
+fn ChildrenScope.video(
+  id: str? = null,
+  class: str? = null,
+  src: str? = null,
+  controls: bool = false,
+  autoplay: bool = false,
+  loop: bool = false,
+  muted: bool = false,
+  preload: str? = null,
+  poster: str? = null,
+  width: int? = null,
+  height: int? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_text_attribute(attributes, "src", src)
+  attributes = _add_boolean_attribute(attributes, "controls", controls)
+  attributes = _add_boolean_attribute(attributes, "autoplay", autoplay)
+  attributes = _add_boolean_attribute(attributes, "loop", loop)
+  attributes = _add_boolean_attribute(attributes, "muted", muted)
+  attributes = _add_text_attribute(attributes, "preload", preload)
+  attributes = _add_text_attribute(attributes, "poster", poster)
+  attributes = _add_numeric_attribute(attributes, "width", width)
+  attributes = _add_numeric_attribute(attributes, "height", height)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("video", attributes, body)
+
+@track_caller
+fn ChildrenScope.iframe(
+  id: str? = null,
+  class: str? = null,
+  src: str? = null,
+  name: str? = null,
+  width: int? = null,
+  height: int? = null,
+  loading: str? = null,
+  allow: str? = null,
+  sandbox: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_text_attribute(attributes, "src", src)
+  attributes = _add_text_attribute(attributes, "name", name)
+  attributes = _add_numeric_attribute(attributes, "width", width)
+  attributes = _add_numeric_attribute(attributes, "height", height)
+  attributes = _add_text_attribute(attributes, "loading", loading)
+  attributes = _add_text_attribute(attributes, "allow", allow)
+  attributes = _add_text_attribute(attributes, "sandbox", sandbox)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("iframe", attributes, body)
+
+@track_caller
+fn ChildrenScope.title(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("title", attributes, body)
+
+@track_caller
+fn ChildrenScope.style(
+  id: str? = null,
+  class: str? = null,
+  media: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_text_attribute(attributes, "media", media)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("style", attributes, body)
+
+@track_caller
+fn ChildrenScope.script(
+  id: str? = null,
+  class: str? = null,
+  src: str? = null,
+  script_type: str? = null,
+  async_enabled: bool = false,
+  defer: bool = false,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = (),
+  body: fn(ChildrenScope)() -> void
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_text_attribute(attributes, "src", src)
+  attributes = _add_text_attribute(attributes, "type", script_type)
+  attributes = _add_boolean_attribute(attributes, "async", async_enabled)
+  attributes = _add_boolean_attribute(attributes, "defer", defer)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_element("script", attributes, body)
+
+# Without a body, a slot is required. During page composition it supplies an
+# empty value only when explicitly requested; template rendering detects misses.
+@track_caller
+fn ChildrenScope.slot(name: str) -> void:
+  if self._collect_slot_supplies:
+    self._supplies.push(
+      _SlotSupply(_name: name, _content: View(_nodes: @[]))
+    )
+    return
+  self._append_slot(name, true, View(_nodes: @[]))
+
+@track_caller
+fn ChildrenScope.slot(name: str, body: fn(ChildrenScope)() -> void) -> void:
+  nodes: list[ViewNode] = @[]
+  content = ChildrenScope(
+    _nodes: nodes,
+    _parent: -1,
+    _collect_slot_supplies: false,
+    _supplies: @[],
+    _has_error: false
+  )
+  body.call(content)
+  if content._has_error:
+    self._has_error = true
+  if self._collect_slot_supplies:
+    self._supplies.push(
+      _SlotSupply(_name: name, _content: View(_nodes: content._nodes))
+    )
+    return
+  self._append_slot(name, false, View(_nodes: content._nodes))
+
+@track_caller
+fn ChildrenScope._append_slot(name: str, required: bool, fallback: View) -> void:
+  index = self._node_count()
+  self._push(
+    ViewNode(
+      _is_text: false,
+      _is_slot: true,
+      _required_slot: required,
+      _parent: self._parent,
+      _name: "",
+      _slot_name: name,
+      _text: "",
+      _attrs: @[],
+      _events: EventHandlers(),
+      _call_site_id: caller_call_site_id()
+    )
+  )
+  base = self._node_count()
+  for node in fallback._nodes:
+    parent = if node._parent < 0:
+      index
+    else:
+      base + node._parent
+    self._push(
+      ViewNode(
+        _is_text: node._is_text,
+        _is_slot: node._is_slot,
+        _required_slot: node._required_slot,
+        _parent: parent,
+        _name: node._name,
+        _slot_name: node._slot_name,
+        _text: node._text,
+        _attrs: node._attrs,
+        _events: node._events,
+        _call_site_id: node._call_site_id,
+        _text_binding: node._text_binding,
+        _attrs_binding: node._attrs_binding,
+        _base_attrs: node._base_attrs,
+        _children_binding: node._children_binding
+      )
+    )
+
+# Rendering is a managed native import. The Rust implementation receives a
+# callback-free projection so browser event closures never cross the SSR ABI.
+fn _render_node(node: ViewNode) -> ViewRenderNode:
+  ViewRenderNode(
+    _is_text: node._is_text,
+    _is_slot: node._is_slot,
+    _required_slot: node._required_slot,
+    _parent: node._parent,
+    _name: node._name,
+    _slot_name: node._slot_name,
+    _text: node._text,
+    _attrs: node._attrs,
+    _call_site_id: node._call_site_id
+  )
+
+fn render(value: View) -> result[str, str]:
+  _render(value, false, false, false, "", 0)
+
+fn render_hydratable(value: View) -> result[str, str]:
+  _render(value, true, false, false, "", 0)
+
+# Used by response.render_hydratable. `data_json` is emitted as inert JSON in
+# an application/json script node, never as executable JavaScript.
+fn render_hydratable_with_bootstrap(
+  value: View,
+  page_id: u64,
+  has_data: bool,
+  data_json: str
+) -> result[str, str]:
+  _render(value, true, true, has_data, data_json, page_id)
+
+fn _render(
+  value: View,
+  include_markers: bool,
+  include_bootstrap: bool,
+  has_data: bool,
+  data_json: str,
+  page_id: u64
+) -> result[str, str]:
+  match value._layout_error:
+    null: _render_resolved(value, include_markers, include_bootstrap, has_data, data_json, page_id)
+    error: err(error)
+
+fn _render_resolved(
+  value: View,
+  include_markers: bool,
+  include_bootstrap: bool,
+  has_data: bool,
+  data_json: str,
+  page_id: u64
+) -> result[str, str]:
+  nodes: list[ViewRenderNode] = @[]
+  for node in value._nodes:
+    nodes.push(_render_node(node))
+  render_view = ViewRender(
+    _nodes: nodes,
+    _include_call_site_markers: include_markers,
+    _include_bootstrap: include_bootstrap,
+    _bootstrap_has_data: has_data,
+    _bootstrap_json: data_json,
+    _bootstrap_page_id: page_id,
+    _hydration_plan: value._hydration_plan
+  )
+  unsafe:
+    _view_render_native(render_view)
+
+fn _subtree_end(nodes: list[ViewNode], root: int) -> int:
+  for candidate in (root + 1) .. nodes.len():
+    if nodes.at(candidate)._parent < root:
+      return candidate
+  nodes.len()
+
+# Resolve one template layer. Kept private to the View builder; application
+# layouts return ordinary Views and never pass slot metadata.
+fn _resolve(layout: View, supplies: list[_SlotSupply]) -> result[View, str]:
+  error: str? = _prefer_error(layout._layout_error, _first_supply_error(supplies))
+  if error != null:
+    return err(error)
+  _resolve_nodes(layout, supplies)
+
+fn _resolve_nodes(layout: View, supplies: list[_SlotSupply]) -> result[View, str]:
+  for left in 0 .. supplies.len():
+    for right in (left + 1) .. supplies.len():
+      if supplies.at(left)._name == supplies.at(right)._name:
+        return err(_ViewError.duplicate_slot.message())
+
+  output: list[ViewNode] = @[]
+  source_to_output: list[int] = @[]
+  declared: list[str] = @[]
+  used: list[bool] = @[]
+  for _ in supplies:
+    used.push(false)
+  skip_through = -1
+
+  for index in 0 .. layout._nodes.len():
+    node = layout._nodes.at(index)
+    if index <= skip_through:
+      source_to_output.push(-1)
+    else:
+      parent = if node._parent < 0:
+        -1
+      else:
+        source_to_output.at(node._parent)
+
+      if node._is_slot:
+        if node._slot_name.byte_len() == 0:
+          return err(_ViewError.invalid_slot_name.message())
+        for previous in declared:
+          if previous == node._slot_name:
+            return err(_ViewError.duplicate_slot.message())
+        declared.push(node._slot_name)
+        supply_index = -1
+        for candidate in 0 .. supplies.len():
+          if supplies.at(candidate)._name == node._slot_name:
+            supply_index = candidate
+
+        source_to_output.push(parent)
+        if supply_index >= 0:
+          used.set(supply_index, true)
+          supplied = supplies.at(supply_index)._content
+          for supplied_node in supplied._nodes:
+            if supplied_node._is_slot:
+              return err(_ViewError.unresolved_nested_slot.message())
+          base = output.len()
+          for supplied_node in supplied._nodes:
+            supplied_parent = if supplied_node._parent < 0:
+              parent
+            else:
+              base + supplied_node._parent
+            output.push(
+              ViewNode(
+                _is_text: supplied_node._is_text,
+                _is_slot: supplied_node._is_slot,
+                _required_slot: supplied_node._required_slot,
+                _parent: supplied_parent,
+                _name: supplied_node._name,
+                _slot_name: supplied_node._slot_name,
+                _text: supplied_node._text,
+                _attrs: supplied_node._attrs,
+                _events: supplied_node._events,
+                _call_site_id: supplied_node._call_site_id,
+                _text_binding: supplied_node._text_binding,
+                _attrs_binding: supplied_node._attrs_binding,
+                _base_attrs: supplied_node._base_attrs,
+                _children_binding: supplied_node._children_binding
+              )
+            )
+          skip_through = _subtree_end(layout._nodes, index) - 1
+        else:
+          if node._required_slot:
+            return err(_ViewError.missing_required_slot.message())
+      else:
+        output_index = output.len()
+        source_to_output.push(output_index)
+        output.push(
+          ViewNode(
+            _is_text: node._is_text,
+            _is_slot: false,
+            _required_slot: false,
+            _parent: parent,
+            _name: node._name,
+            _slot_name: "",
+            _text: node._text,
+            _attrs: node._attrs,
+            _events: node._events,
+            _call_site_id: node._call_site_id,
+            _text_binding: node._text_binding,
+            _attrs_binding: node._attrs_binding,
+            _base_attrs: node._base_attrs,
+            _children_binding: node._children_binding
+          )
+        )
+
+  for index in 0 .. supplies.len():
+    if not used.at(index):
+      return err(_ViewError.unknown_slot.message())
+  ok(View(_nodes: output))
+
+# HTML void elements do not accept child callbacks.
+# HTML void elements normalize their attributes through the same pipeline.
+@track_caller
+fn ChildrenScope.br(
+  id: str? = null,
+  class: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = ()
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_void("br", attributes)
+
+@track_caller
+fn ChildrenScope.img(
+  id: str? = null,
+  class: str? = null,
+  src: str? = null,
+  alt: str? = null,
+  width: int? = null,
+  height: int? = null,
+  loading: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = ()
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_text_attribute(attributes, "src", src)
+  attributes = _add_text_attribute(attributes, "alt", alt)
+  attributes = _add_numeric_attribute(attributes, "width", width)
+  attributes = _add_numeric_attribute(attributes, "height", height)
+  attributes = _add_text_attribute(attributes, "loading", loading)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_void("img", attributes)
+
+@track_caller
+fn ChildrenScope.input(
+  id: str? = null,
+  class: str? = null,
+  input_type: str? = null,
+  name: str? = null,
+  value: str? = null,
+  placeholder: str? = null,
+  required: bool = false,
+  disabled: bool = false,
+  checked: bool = false,
+  readonly: bool = false,
+  autocomplete: str? = null,
+  min: float? = null,
+  max: float? = null,
+  step: float? = null,
+  minlength: int? = null,
+  maxlength: int? = null,
+  on_input: InputEventHandler? = null,
+  on_change: ChangeEventHandler? = null,
+  on_focus: FocusEventHandler? = null,
+  on_blur: FocusEventHandler? = null,
+  on_key_down: KeyboardEventHandler? = null,
+  on_key_up: KeyboardEventHandler? = null,
+  on_click: MouseEventHandler? = null,
+  on_invalid: EventHandler? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = ()
+) -> void:
+  attributes: list[Attribute] = @[]
+  if id != null:
+    attributes.push(attr("id", id))
+  if class != null:
+    attributes.push(attr("class", class))
+  if input_type != null:
+    attributes.push(attr("type", input_type))
+  if name != null:
+    attributes.push(attr("name", name))
+  if value != null:
+    attributes.push(attr("value", value))
+  if placeholder != null:
+    attributes.push(attr("placeholder", placeholder))
+  if required:
+    attributes.push(bool_attr("required", true))
+  if disabled:
+    attributes.push(bool_attr("disabled", true))
+  if checked:
+    attributes.push(bool_attr("checked", true))
+  if readonly:
+    attributes.push(bool_attr("readonly", true))
+  if autocomplete != null:
+    attributes.push(attr("autocomplete", autocomplete))
+  if min != null:
+    attributes.push(attr("min", "$min"))
+  if max != null:
+    attributes.push(attr("max", "$max"))
+  if step != null:
+    attributes.push(attr("step", "$step"))
+  if minlength != null:
+    attributes.push(attr("minlength", "$minlength"))
+  if maxlength != null:
+    attributes.push(attr("maxlength", "$maxlength"))
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_void_with_events(
+    "input",
+    attributes,
+    event_handlers(
+      on_input = on_input,
+      on_change = on_change,
+      on_focus = on_focus,
+      on_blur = on_blur,
+      on_key_down = on_key_down,
+      on_key_up = on_key_up,
+      on_click = on_click,
+      on_invalid = on_invalid
+    )
+  )
+
+@track_caller
+fn ChildrenScope.source(
+  src: str? = null,
+  source_type: str? = null,
+  media: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = ()
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "src", src)
+  attributes = _add_text_attribute(attributes, "type", source_type)
+  attributes = _add_text_attribute(attributes, "media", media)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_void("source", attributes)
+
+@track_caller
+fn ChildrenScope.meta(
+  name: str? = null,
+  content: str? = null,
+  charset: str? = null,
+  http_equiv: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = ()
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "name", name)
+  attributes = _add_text_attribute(attributes, "content", content)
+  attributes = _add_text_attribute(attributes, "charset", charset)
+  attributes = _add_text_attribute(attributes, "http-equiv", http_equiv)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_void("meta", attributes)
+
+@track_caller
+fn ChildrenScope.link(
+  id: str? = null,
+  class: str? = null,
+  href: str? = null,
+  rel: str? = null,
+  link_type: str? = null,
+  media: str? = null,
+  attrs: list[Attribute] = @[],
+  css: map[str, str] = ()
+) -> void:
+  attributes: list[Attribute] = @[]
+  attributes = _add_text_attribute(attributes, "id", id)
+  attributes = _add_text_attribute(attributes, "class", class)
+  attributes = _add_text_attribute(attributes, "href", href)
+  attributes = _add_text_attribute(attributes, "rel", rel)
+  attributes = _add_text_attribute(attributes, "type", link_type)
+  attributes = _add_text_attribute(attributes, "media", media)
+  attributes = _add_custom_attributes(attributes, attrs)
+  attributes = _add_css_attributes(attributes, css)
+  self._append_void("link", attributes)
+
+# Stable read-only projections keep the node table private while making common
+# structural facts and text content inspectable by applications and tests.
+fn View.root_count() -> int:
+  count = 0
+  for node in self._nodes:
+    if node._parent < 0:
+      count = count + 1
+  count
+
+fn View.text_content() -> str:
+  result = ""
+  for node in self._nodes:
+    if node._is_text:
+      result = result + node._text
+  result
+
+# Event bindings target elements by exact, unique id. Keep this projection
+# narrow so the separate event module never needs access to ViewNode fields.
+fn View.element_id_count(id: str) -> int:
+  count = 0
+  for node in self._nodes:
+    if not node._is_text and not node._is_slot:
+      for attribute in node._attrs:
+        if attribute._name == "id" and attribute._value == id:
+          count = count + 1
+  count

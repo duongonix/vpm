@@ -22,6 +22,28 @@
         "Vut contributors"
       ],
       "license": "MIT"
+    },
+    {
+      "schemaVersion": 1,
+      "name": "vutnet",
+      "description": "Typed native HTTP framework and development tools for Vut.",
+      "owner": "duongonix",
+      "latestVersion": "0.1.0",
+      "keywords": [
+        "web",
+        "http",
+        "framework",
+        "server-rendering",
+        "vut"
+      ],
+      "repository": "https://github.com/duongonix/vut_repo",
+      "source": {
+        "provider": "github",
+        "repository": "duongonix/vpm",
+        "path": "vutnet"
+      },
+      "license": "MIT",
+      "homepage": "https://github.com/duongonix/vut_repo/tree/main/vpm-package/vutnet"
     }
   ]
 }

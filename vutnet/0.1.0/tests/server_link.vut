@@ -1,0 +1,10 @@
+# Dogfood test: Vutnet's internal server Cargo crate is built and linked
+# automatically as part of its native package, with no manual `.lib`/`.a` setup.
+#
+# `serve_fixed` validates its arguments before binding, so an invalid status
+# returns `-1` immediately and the process exits without opening a socket.
+import vutnet.server as server
+
+fn main():
+  code = server.serve_fixed(0, 99)
+  out("serve_fixed=$code")

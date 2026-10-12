@@ -1,0 +1,145 @@
+# Typed browser event snapshots shared by View builders and the browser host.
+# The opaque control id is valid only during the synchronous DOM callback.
+
+extern "C" fn vut_browser_event_prevent_default(control_id: i32) -> void
+extern "C" fn vut_browser_event_stop_propagation(control_id: i32) -> void
+
+data EventTarget:
+  id: str
+  tag: str
+  name: str
+
+data Event:
+  _control_id: i32
+  target: EventTarget
+
+data MouseEvent:
+  _base: Event
+  target: EventTarget
+  button: int
+  alt_key: bool
+  ctrl_key: bool
+  meta_key: bool
+  shift_key: bool
+
+data InputEvent:
+  _base: Event
+  target: EventTarget
+  value: str
+  checked: bool
+
+data ChangeEvent:
+  _base: Event
+  target: EventTarget
+  value: str
+  checked: bool
+
+data KeyboardEvent:
+  _base: Event
+  target: EventTarget
+  key: str
+  code: str
+  repeat: bool
+
+data FocusEvent:
+  _base: Event
+  target: EventTarget
+
+data SubmitEvent:
+  _base: Event
+  target: EventTarget
+
+type EventHandler = fn(Event) -> void
+type MouseEventHandler = fn(MouseEvent) -> void
+type InputEventHandler = fn(InputEvent) -> void
+type ChangeEventHandler = fn(ChangeEvent) -> void
+type KeyboardEventHandler = fn(KeyboardEvent) -> void
+type FocusEventHandler = fn(FocusEvent) -> void
+type SubmitEventHandler = fn(SubmitEvent) -> void
+
+# All tag-specific callbacks are kept out of HTML attributes and normalized
+# into this one typed representation on each ViewNode.
+data EventHandlers:
+  _on_click: MouseEventHandler? = null
+  _on_focus: FocusEventHandler? = null
+  _on_blur: FocusEventHandler? = null
+  _on_key_down: KeyboardEventHandler? = null
+  _on_key_up: KeyboardEventHandler? = null
+  _on_input: InputEventHandler? = null
+  _on_change: ChangeEventHandler? = null
+  _on_invalid: EventHandler? = null
+  _on_select: EventHandler? = null
+  _on_submit: SubmitEventHandler? = null
+  _on_reset: EventHandler? = null
+
+fn event_handlers(
+  on_click: MouseEventHandler? = null,
+  on_focus: FocusEventHandler? = null,
+  on_blur: FocusEventHandler? = null,
+  on_key_down: KeyboardEventHandler? = null,
+  on_key_up: KeyboardEventHandler? = null,
+  on_input: InputEventHandler? = null,
+  on_change: ChangeEventHandler? = null,
+  on_invalid: EventHandler? = null,
+  on_select: EventHandler? = null,
+  on_submit: SubmitEventHandler? = null,
+  on_reset: EventHandler? = null
+) -> EventHandlers:
+  EventHandlers(
+    _on_click: on_click,
+    _on_focus: on_focus,
+    _on_blur: on_blur,
+    _on_key_down: on_key_down,
+    _on_key_up: on_key_up,
+    _on_input: on_input,
+    _on_change: on_change,
+    _on_invalid: on_invalid,
+    _on_select: on_select,
+    _on_submit: on_submit,
+    _on_reset: on_reset
+  )
+
+fn Event.prevent_default() -> void:
+  unsafe:
+    vut_browser_event_prevent_default(self._control_id)
+
+fn Event.stop_propagation() -> void:
+  unsafe:
+    vut_browser_event_stop_propagation(self._control_id)
+
+fn MouseEvent.prevent_default() -> void:
+  self._base.prevent_default()
+
+fn MouseEvent.stop_propagation() -> void:
+  self._base.stop_propagation()
+
+fn InputEvent.prevent_default() -> void:
+  self._base.prevent_default()
+
+fn InputEvent.stop_propagation() -> void:
+  self._base.stop_propagation()
+
+fn ChangeEvent.prevent_default() -> void:
+  self._base.prevent_default()
+
+fn ChangeEvent.stop_propagation() -> void:
+  self._base.stop_propagation()
+
+fn KeyboardEvent.prevent_default() -> void:
+  self._base.prevent_default()
+
+fn KeyboardEvent.stop_propagation() -> void:
+  self._base.stop_propagation()
+
+fn FocusEvent.prevent_default() -> void:
+  self._base.prevent_default()
+
+fn FocusEvent.stop_propagation() -> void:
+  self._base.stop_propagation()
+
+fn SubmitEvent.prevent_default() -> void:
+  self._base.prevent_default()
+
+fn SubmitEvent.stop_propagation() -> void:
+  self._base.stop_propagation()
+

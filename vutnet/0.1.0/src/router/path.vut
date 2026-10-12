@@ -1,0 +1,62 @@
+# Internal path normalization for the Router DSL.
+#
+# This module is an implementation detail of `vutnet.router`; its symbols are
+# not part of the public Vutnet API. It is imported by `router/mod.vut` through
+# a relative import so it resolves both when `vutnet` is the current package and
+# when it is mounted as a dependency under its package name.
+
+# True for a non-empty path segment.
+fn _non_empty(segment: str) -> bool:
+  segment.byte_len() > 0
+
+# Removes leading and trailing '/' characters. The root becomes "".
+fn trim(value: str) -> str:
+  value.split("/").filter(_non_empty).join("/")
+
+# Canonical join of a prefix and a component.
+#
+# Guarantees exactly one leading '/', no trailing '/' except the root "/", and
+# never a doubled separator:
+#
+#   join("/", "/")                 -> "/"
+#   join("/", "/setting/")         -> "/setting"
+#   join("/admin", "/setting/")    -> "/admin/setting"
+#   join("/admin/", "/")           -> "/admin"
+fn join(prefix: str, component: str) -> str:
+  base = trim(prefix)
+  part = trim(component)
+  if part.byte_len() == 0:
+    if base.byte_len() == 0:
+      return "/"
+    return "/" + base
+  if base.byte_len() == 0:
+    return "/" + part
+  "/" + base + "/" + part
+
+# Returns "" when `value` is a valid canonical route path, else a reason.
+#
+# Canonical paths always start with exactly one '/', never end with '/' unless
+# they are the root, and never contain a query, fragment, doubled separator or
+# control byte. Named segments such as `:id` are allowed with non-empty names.
+fn invalid_reason(value: str) -> str:
+  if value.byte_len() == 0:
+    return "empty path"
+  if not value.starts_with("/"):
+    return "path must start with '/'"
+  if value.byte_len() > 1 and value.ends_with("/"):
+    return "path must not end with '/'"
+  if value.contains("//"):
+    return "path must not contain '//'"
+  if value.contains("?") or value.contains("#"):
+    return "path must not contain a query or fragment"
+  for character in value.chars():
+    if character.compare(" ") < 0:
+      return "path must not contain control characters"
+  for segment in value.split("/"):
+    if segment.starts_with(":"):
+      name = segment.substring(1, segment.byte_len())
+      if name.byte_len() == 0:
+        return "empty path parameter name"
+      if name.contains(":"):
+        return "invalid path parameter name"
+  ""

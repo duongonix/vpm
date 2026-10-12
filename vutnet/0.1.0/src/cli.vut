@@ -1,0 +1,145 @@
+@link_name("vutnet_cli_help_v1")
+extern "VutManaged" fn _native_help() -> i32
+
+@link_name("vutnet_cli_version_v1")
+extern "VutManaged" fn _native_version() -> i32
+
+@link_name("vutnet_cli_bad_args_v1")
+extern "VutManaged" fn _native_bad_args() -> i32
+
+@link_name("vutnet_cli_unknown_v1")
+extern "VutManaged" fn _native_unknown(command: str) -> i32
+
+@link_name("vutnet_cli_new_v1")
+extern "VutManaged" fn _native_new(name: str) -> i32
+
+@link_name("vutnet_cli_dev_v1")
+extern "VutManaged" fn _native_dev() -> i32
+
+@link_name("vutnet_cli_dev_verbose_v1")
+extern "VutManaged" fn _native_dev_verbose() -> i32
+
+@link_name("vutnet_cli_build_v1")
+extern "VutManaged" fn _native_build() -> i32
+
+@link_name("vutnet_cli_run_v1")
+extern "VutManaged" fn _native_run() -> i32
+
+@link_name("vutnet_cli_start_v1")
+extern "VutManaged" fn _native_start() -> i32
+
+@link_name("vutnet_cli_routes_v1")
+extern "VutManaged" fn _native_routes() -> i32
+
+@link_name("vutnet_cli_routes_json_v1")
+extern "VutManaged" fn _native_routes_json() -> i32
+
+@link_name("vutnet_cli_info_v1")
+extern "VutManaged" fn _native_info() -> i32
+
+fn _help() -> i32:
+  unsafe:
+    _native_help()
+
+fn _version() -> i32:
+  unsafe:
+    _native_version()
+
+fn _bad_args() -> i32:
+  unsafe:
+    _native_bad_args()
+
+fn _unknown(command: str) -> i32:
+  unsafe:
+    _native_unknown(command)
+
+fn _new(name: str) -> i32:
+  unsafe:
+    _native_new(name)
+
+fn _dev(verbose: bool) -> i32:
+  if verbose:
+    return _dev_verbose()
+  unsafe:
+    _native_dev()
+
+fn _dev_verbose() -> i32:
+  unsafe:
+    _native_dev_verbose()
+
+fn _build() -> i32:
+  unsafe:
+    _native_build()
+
+fn _run() -> i32:
+  unsafe:
+    _native_run()
+
+fn _start() -> i32:
+  unsafe:
+    _native_start()
+
+fn _routes() -> i32:
+  unsafe:
+    _native_routes()
+
+fn _routes_json() -> i32:
+  unsafe:
+    _native_routes_json()
+
+fn _info() -> i32:
+  unsafe:
+    _native_info()
+
+# The public command table lives in Vut. Native Rust implements each command's
+# filesystem/process work behind the package's declared native build.
+fn run(args: list[str]) -> i32:
+  if args.len() < 2:
+    return _help()
+
+  command = args.at(1)
+  if command == "--help" or command == "-h" or command == "help":
+    return _help()
+  if command == "--version" or command == "-V":
+    return _version()
+
+  if command == "new":
+    if args.len() == 3:
+      return _new(args.at(2))
+    return _bad_args()
+
+  if command == "dev":
+    if args.len() == 2:
+      return _dev(false)
+    if args.len() == 3 and args.at(2) == "--verbose":
+      return _dev(true)
+    return _bad_args()
+
+  if command == "build":
+    if args.len() == 2:
+      return _build()
+    return _bad_args()
+
+  if command == "run":
+    if args.len() == 2:
+      return _run()
+    return _bad_args()
+
+  if command == "start":
+    if args.len() == 2:
+      return _start()
+    return _bad_args()
+
+  if command == "routes":
+    if args.len() == 2:
+      return _routes()
+    if args.len() == 3 and args.at(2) == "--json":
+      return _routes_json()
+    return _bad_args()
+
+  if command == "info":
+    if args.len() == 2:
+      return _info()
+    return _bad_args()
+
+  _unknown(command)

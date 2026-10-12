@@ -1,0 +1,14 @@
+# Execute the application's custom json.Decodable implementation inside Vut.
+# Only the JSON source and the statically typed result cross the JS/WASM bridge.
+import json at Decodable, parse
+
+fn decode_bootstrap[T: Decodable](source: str) -> result[T, str]:
+  match parse(source):
+    ok(envelope):
+      match envelope.get("data"):
+        ok(payload):
+          match T.from_json(payload):
+            ok(value): ok(value)
+            err(error): err(error.message)
+        err(error): err(error.message)
+    err(error): err("$(error.line):$(error.column): $(error.message)")

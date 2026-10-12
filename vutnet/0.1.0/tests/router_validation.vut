@@ -1,0 +1,97 @@
+# Router validation: duplicate `(method, path)` rejection, same path with a
+# different method, and invalid path rejection.
+import vutnet.router at router, Router, Controller, RouteEntry, RouterError, RouterErrorKind
+import vutnet.method as method
+import vutnet.context at Context
+import vutnet.response at Response
+import vutnet.response as response
+
+fn home(ctx: Context) -> Response:
+  response.send(200, "home")
+
+fn render(entries: list[RouteEntry]) -> str:
+  lines: list[str] = @[]
+  for entry in entries:
+    for m in entry.methods:
+      lines.push(m.text() + " " + entry.path)
+  lines.join("\n")
+
+fn expect(label: str, actual: str, wanted: str) -> int:
+  if actual == wanted:
+    out("ok $label")
+    return 0
+  out("FAIL $label")
+  out("  got:  [$actual]")
+  out("  want: [$wanted]")
+  1
+
+fn kind_text(kind: RouterErrorKind) -> str:
+  match kind:
+    duplicate_route: "duplicate_route"
+    invalid_path: "invalid_path"
+
+fn expect_ok(label: str, built: result[list[RouteEntry], RouterError], wanted: str) -> int:
+  match built:
+    ok(entries): expect(label, render(entries), wanted)
+    err(error): expect(label, error.message, "ok")
+
+fn expect_error(label: str, built: result[list[RouteEntry], RouterError], kind: str) -> int:
+  match built:
+    ok(entries):
+      out("FAIL $label: expected $kind, got $(entries.len()) route(s)")
+      1
+    err(error):
+      expect(label, kind_text(error.kind), kind)
+
+fn duplicate_default_get() -> Router:
+  router():
+    Route(path = "/", controller = home)
+    Route(path = "/", controller = home)
+
+fn same_path_different_method() -> Router:
+  router():
+    Route(path = "/x", controller = home, method = @[method.Method.get])
+    Route(path = "/x", controller = home, method = @[method.Method.post])
+
+fn duplicate_in_multi_method() -> Router:
+  router():
+    Route(path = "/y", controller = home, method = @[method.Method.get, method.Method.post])
+    Route(path = "/y", controller = home, method = @[method.Method.post])
+
+fn LeafRouter() -> Router:
+  router():
+    Route(path = "/leaf", controller = home)
+
+fn duplicate_mounted() -> Router:
+  router():
+    UseRouter(path = "/a", router = LeafRouter)
+    UseRouter(path = "/a", router = LeafRouter)
+
+fn duplicate_via_group() -> Router:
+  router():
+    Routes(path = "/a"):
+      Route(path = "/x", controller = home)
+    Route(path = "/a/x", controller = home)
+
+fn invalid_query() -> Router:
+  router():
+    Route(path = "/a?b", controller = home)
+
+fn invalid_param_name() -> Router:
+  router():
+    Route(path = "/:", controller = home)
+
+fn main() -> int:
+  failures = 0
+  failures = failures + expect_error("duplicate_default_get", duplicate_default_get().flatten(), "duplicate_route")
+  failures = failures + expect_ok(
+    "same_path_different_method",
+    same_path_different_method().flatten(),
+    "GET /x\nPOST /x"
+  )
+  failures = failures + expect_error("duplicate_multi_method", duplicate_in_multi_method().flatten(), "duplicate_route")
+  failures = failures + expect_error("duplicate_mounted", duplicate_mounted().flatten(), "duplicate_route")
+  failures = failures + expect_error("duplicate_via_group", duplicate_via_group().flatten(), "duplicate_route")
+  failures = failures + expect_error("invalid_query", invalid_query().flatten(), "invalid_path")
+  failures = failures + expect_error("invalid_param_name", invalid_param_name().flatten(), "invalid_path")
+  failures

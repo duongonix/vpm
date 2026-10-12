@@ -1,0 +1,28 @@
+# Legacy scalar proof facade for Vutnet's internal HTTP server engine.
+#
+# The production App/Router/Context/Response path uses the native adapter and
+# public Native Callback ABI. This scalar entrypoint remains for the Phase 2
+# native-link regression; it is not the application server API.
+#
+# Keep the import declaration in this package module so both the Vutnet CLI and
+# package consumers see the same canonical namespace.
+
+@link_name("vutnet_server_serve_fixed_v1")
+extern "C" fn _serve_fixed(port: i32, status: i32) -> i32
+
+# Runs a blocking fixed-response HTTP server on `127.0.0.1:<port>`.
+#
+# Every request receives HTTP `status` (100–599, informational excluded) with
+# the fixed text body "Hello from the Vut server".
+#
+# Returns `0` after a clean shutdown, or a negative native error code:
+#
+#   -1  invalid status
+#   -2  invalid port
+#   -3  runtime failure
+#   -4  bind failure
+#
+# This is a native-core proof entrypoint, not the Vutnet application API.
+fn serve_fixed(port: i32, status: i32) -> i32:
+  unsafe:
+    _serve_fixed(port, status)

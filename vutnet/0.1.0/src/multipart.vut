@@ -1,0 +1,82 @@
+# Owned multipart snapshot parsed by Rust. Upload filenames are metadata only.
+data MultipartField:
+  _name: str
+  _value: str
+
+data MultipartFile:
+  _name: str
+  _filename: str
+  _has_filename: bool
+  _content_type: str
+  _has_content_type: bool
+  _body: bytes
+
+data Multipart:
+  _error_code: int
+  _fields: list[MultipartField]
+  _files: list[MultipartFile]
+
+enum MultipartError:
+  not_multipart
+  missing_boundary
+  invalid_boundary
+  malformed
+  invalid_text
+  invalid_disposition
+  too_many_parts
+
+fn Multipart.result() -> result[Multipart, MultipartError]:
+  match self._error_code:
+    0: ok(self)
+    1: err(MultipartError.not_multipart)
+    2: err(MultipartError.missing_boundary)
+    3: err(MultipartError.invalid_boundary)
+    5: err(MultipartError.invalid_text)
+    6: err(MultipartError.invalid_disposition)
+    7: err(MultipartError.too_many_parts)
+    _: err(MultipartError.malformed)
+
+fn Multipart.field(name: str) -> str?:
+  for entry in self._fields:
+    if entry._name == name:
+      return entry._value
+  null
+
+fn Multipart.fields(name: str) -> list[str]:
+  values: list[str] = @[]
+  for entry in self._fields:
+    if entry._name == name:
+      values.push(entry._value)
+  values
+
+fn Multipart.file(name: str) -> MultipartFile?:
+  for entry in self._files:
+    if entry._name == name:
+      return entry
+  null
+
+fn Multipart.files(name: str) -> list[MultipartFile]:
+  values: list[MultipartFile] = @[]
+  for entry in self._files:
+    if entry._name == name:
+      values.push(entry)
+  values
+
+fn MultipartFile.name() -> str:
+  self._name
+
+fn MultipartFile.filename() -> str?:
+  if self._has_filename:
+    return self._filename
+  null
+
+fn MultipartFile.content_type() -> str?:
+  if self._has_content_type:
+    return self._content_type
+  null
+
+fn MultipartFile.bytes() -> bytes:
+  self._body
+
+fn MultipartFile.size() -> int:
+  self._body.len()

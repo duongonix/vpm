@@ -1,0 +1,20 @@
+# Typed Vutnet state uses Vut's identity-bearing cell. The compiler validates
+# CellSafe at generic call sites before a concrete state can be constructed.
+import cell_safe at CellSafe
+
+fn state[T: CellSafe](initial: T) -> cell[T]:
+  cell[T](initial)
+
+fn state_get[T: CellSafe](value: cell[T]) -> T:
+  value.get()
+
+fn state_set[T: CellSafe](state: cell[T], value: T) -> void:
+  state.set(value)
+
+fn state_update[T: CellSafe](state: cell[T], update: fn(T) -> T) -> T:
+  next = update(state.get())
+  state.set(next)
+  next
+
+fn state_revision[T: CellSafe](state: cell[T]) -> u64:
+  state.revision()

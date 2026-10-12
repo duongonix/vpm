@@ -1,0 +1,305 @@
+# Vutnet Router DSL: typed route composition, scoped middleware and validation.
+import .. context at Context, DispatchPipeline, MiddlewareLayer, MiddlewareEntry, ScopedMiddleware, middleware_layer, scoped_middleware, empty_pipeline
+import .. response at Response
+import .. method as m
+import.path as paths
+
+type Controller = fn(Context) -> Response
+type Next = fn(Context) -> Response
+type Middleware = fn(Context, Next) -> Response
+type RouterFactory = fn() -> Router
+
+enum RouterErrorKind:
+  duplicate_route
+  invalid_path
+
+data RouterError:
+  kind: RouterErrorKind
+  message: str
+
+data RouteEntry:
+  path: str
+  methods: list[m.Method]
+  method_names: list[str]
+  controller: Controller
+  pipeline: DispatchPipeline
+
+data Router:
+  _entries: list[RouteEntry]
+  _validation_code: int
+  _validation_message: str
+
+data RouterValidation:
+  _code: int
+  _message: str
+
+# Parallel flat registries keep Receiver Function builder values free of nested
+# managed lists. Pipeline layers are materialized after the Router body returns.
+data RouterBuilder:
+  route_paths: list[str]
+  route_method_starts: list[int]
+  route_method_counts: list[int]
+  route_controllers: list[Controller]
+  route_scope_ids: list[int]
+  mount_paths: list[str]
+  mount_factory_indices: list[int]
+  mount_scope_ids: list[int]
+  router_factories: list[RouterFactory]
+  order_kinds: list[int]
+  order_indices: list[int]
+  methods: list[m.Method]
+  scope_parents: list[int]
+  middleware: list[ScopedMiddleware]
+
+data RouterScope:
+  builder: RouterBuilder
+  prefix: str
+  scope_id: int
+
+data RoutesScope:
+  builder: RouterBuilder
+  prefix: str
+  scope_id: int
+
+fn _scope_ids(builder: RouterBuilder, scope_id: int) -> list[int]:
+  ids: list[int] = @[]
+  if scope_id >= 0:
+    parent_id = builder.scope_parents.at(scope_id)
+    if parent_id >= 0:
+      ids = _scope_ids(builder, parent_id)
+    ids.push(scope_id)
+  ids
+
+fn _layers_for_scope(builder: RouterBuilder, scope_id: int) -> list[MiddlewareLayer]:
+  if builder.middleware.len() == 0:
+    return@[]
+  layer = middleware_layer(builder.middleware, _scope_ids(builder, scope_id))
+  @[layer]
+
+fn _route_methods(builder: RouterBuilder, start: int, count: int) -> list[m.Method]:
+  methods: list[m.Method] = @[]
+  for index in start .. (start + count):
+    methods.push(builder.methods.at(index))
+  methods
+
+fn _method_names(methods: list[m.Method]) -> list[str]:
+  names: list[str] = @[]
+  for method in methods:
+    names.push(method.text())
+  names
+
+fn _route_entry(
+  builder: RouterBuilder,
+  path: str,
+  method_start: int,
+  method_count: int,
+  controller: Controller,
+  scope_id: int
+) -> RouteEntry:
+  methods = _route_methods(builder, method_start, method_count)
+  layers = _layers_for_scope(builder, scope_id)
+  pipeline = empty_pipeline(controller).with_prefix_layers(layers)
+  RouteEntry(
+    path: path,
+    methods: methods,
+    method_names: _method_names(methods),
+    controller: controller,
+    pipeline: pipeline
+  )
+
+fn _mount_entry(entry: RouteEntry, prefix: str, layers: list[MiddlewareLayer]) -> RouteEntry:
+  RouteEntry(
+    path: paths.join(prefix, entry.path),
+    methods: entry.methods,
+    method_names: entry.method_names,
+    controller: entry.controller,
+    pipeline: entry.pipeline.with_prefix_layers(layers)
+  )
+
+fn _build_entries(builder: RouterBuilder) -> list[RouteEntry]:
+  entries: list[RouteEntry] = @[]
+  for position in 0 .. builder.order_kinds.len():
+    kind = builder.order_kinds.at(position)
+    index = builder.order_indices.at(position)
+    if kind == 0:
+      entries.push(
+        _route_entry(
+          builder,
+          builder.route_paths.at(index),
+          builder.route_method_starts.at(index),
+          builder.route_method_counts.at(index),
+          builder.route_controllers.at(index),
+          builder.route_scope_ids.at(index)
+        )
+      )
+    else:
+      factory_index = builder.mount_factory_indices.at(index)
+      factory = builder.router_factories.at(factory_index)
+      mounted = factory()
+      layers = _layers_for_scope(builder, builder.mount_scope_ids.at(index))
+      prefix = builder.mount_paths.at(index)
+      for entry in mounted._entries:
+        entries.push(_mount_entry(entry, prefix, layers))
+  entries
+
+fn router(body: fn(RouterScope)() -> void) -> Router:
+  builder = RouterBuilder(
+    route_paths: @[],
+    route_method_starts: @[],
+    route_method_counts: @[],
+    route_controllers: @[],
+    route_scope_ids: @[],
+    mount_paths: @[],
+    mount_factory_indices: @[],
+    mount_scope_ids: @[],
+    router_factories: @[],
+    order_kinds: @[],
+    order_indices: @[],
+    methods: @[],
+    scope_parents: @[],
+    middleware: @[]
+  )
+  root_scope = builder.scope_parents.len()
+  builder.scope_parents.push(-1)
+  body.call(RouterScope(builder: builder, prefix: "/", scope_id: root_scope))
+  entries = _build_entries(builder)
+  validation = _validate(entries)
+  Router(
+    _entries: entries,
+    _validation_code: validation._code,
+    _validation_message: validation._message
+  )
+
+fn RouterScope.Route(
+  path: str,
+  controller: Controller,
+  method: list[m.Method] = @[m.Method.get]
+) -> void:
+  method_start = self.builder.methods.len()
+  for item in method:
+    self.builder.methods.push(item)
+  route_index = self.builder.route_paths.len()
+  self.builder.route_paths.push(paths.join(self.prefix, path))
+  self.builder.route_method_starts.push(method_start)
+  self.builder.route_method_counts.push(method.len())
+  self.builder.route_controllers.push(controller)
+  self.builder.route_scope_ids.push(self.scope_id)
+  self.builder.order_kinds.push(0)
+  self.builder.order_indices.push(route_index)
+
+fn RouterScope.Routes(path: str, body: fn(RoutesScope)() -> void) -> void:
+  scope_id = self.builder.scope_parents.len()
+  self.builder.scope_parents.push(self.scope_id)
+  body.call(
+    RoutesScope(
+      builder: self.builder,
+      prefix: paths.join(self.prefix, path),
+      scope_id: scope_id
+    )
+  )
+
+fn RouterScope.Use(middleware: Middleware) -> void:
+  self.builder.middleware.push(scoped_middleware(self.scope_id, middleware))
+
+fn RouterScope.UseRouter(path: str, router: RouterFactory) -> void:
+  mount_index = self.builder.mount_paths.len()
+  factory_index = self.builder.router_factories.len()
+  self.builder.mount_paths.push(paths.join(self.prefix, path))
+  self.builder.mount_factory_indices.push(factory_index)
+  self.builder.mount_scope_ids.push(self.scope_id)
+  self.builder.router_factories.push(router)
+  self.builder.order_kinds.push(1)
+  self.builder.order_indices.push(mount_index)
+
+fn RoutesScope.Route(
+  path: str,
+  controller: Controller,
+  method: list[m.Method] = @[m.Method.get]
+) -> void:
+  method_start = self.builder.methods.len()
+  for item in method:
+    self.builder.methods.push(item)
+  route_index = self.builder.route_paths.len()
+  self.builder.route_paths.push(paths.join(self.prefix, path))
+  self.builder.route_method_starts.push(method_start)
+  self.builder.route_method_counts.push(method.len())
+  self.builder.route_controllers.push(controller)
+  self.builder.route_scope_ids.push(self.scope_id)
+  self.builder.order_kinds.push(0)
+  self.builder.order_indices.push(route_index)
+
+fn RoutesScope.Routes(path: str, body: fn(RoutesScope)() -> void) -> void:
+  scope_id = self.builder.scope_parents.len()
+  self.builder.scope_parents.push(self.scope_id)
+  body.call(
+    RoutesScope(
+      builder: self.builder,
+      prefix: paths.join(self.prefix, path),
+      scope_id: scope_id
+    )
+  )
+
+fn RoutesScope.Use(middleware: Middleware) -> void:
+  self.builder.middleware.push(scoped_middleware(self.scope_id, middleware))
+
+fn RoutesScope.UseRouter(path: str, router: RouterFactory) -> void:
+  mount_index = self.builder.mount_paths.len()
+  factory_index = self.builder.router_factories.len()
+  self.builder.mount_paths.push(paths.join(self.prefix, path))
+  self.builder.mount_factory_indices.push(factory_index)
+  self.builder.mount_scope_ids.push(self.scope_id)
+  self.builder.router_factories.push(router)
+  self.builder.order_kinds.push(1)
+  self.builder.order_indices.push(mount_index)
+
+fn Router.with_global_middleware(middleware: list[MiddlewareEntry]) -> Router:
+  entries: list[RouteEntry] = @[]
+  for entry in self._entries:
+    entries.push(
+      RouteEntry(
+        path: entry.path,
+        methods: entry.methods,
+        method_names: entry.method_names,
+        controller: entry.controller,
+        pipeline: entry.pipeline.with_global_middleware(middleware)
+      )
+    )
+  Router(
+    _entries: entries,
+    _validation_code: self._validation_code,
+    _validation_message: self._validation_message
+  )
+
+fn Router.entries() -> list[RouteEntry]:
+  self._entries
+
+fn Router.flatten() -> result[list[RouteEntry], RouterError]:
+  if self._validation_code == 1:
+    return err(
+      RouterError(
+        kind: RouterErrorKind.duplicate_route,
+        message: self._validation_message
+      )
+    )
+  if self._validation_code == 2:
+    return err(
+      RouterError(
+        kind: RouterErrorKind.invalid_path,
+        message: self._validation_message
+      )
+    )
+  ok(self._entries)
+
+fn _validate(entries: list[RouteEntry]) -> RouterValidation:
+  seen: list[str] = @[]
+  for entry in entries:
+    reason = paths.invalid_reason(entry.path)
+    if reason.byte_len() > 0:
+      return RouterValidation(_code: 2, _message: reason)
+    for method in entry.methods:
+      key = method.text() + " " + entry.path
+      for existing in seen:
+        if existing == key:
+          return RouterValidation(_code: 1, _message: "duplicate route $key")
+      seen.push(key)
+  RouterValidation(_code: 0, _message: "")

@@ -1,0 +1,107 @@
+# Router composition: nested `Routes`, nested `UseRouter`, `Routes` + `UseRouter`, deep
+# nesting, and the reference flattened table.
+import vutnet.router at router, Router, Controller, RouteEntry
+import vutnet.context at Context
+import vutnet.response at Response
+import vutnet.response as response
+
+fn home(ctx: Context) -> Response:
+  response.send(200, "home")
+
+fn users(ctx: Context) -> Response:
+  response.send(200, "users")
+
+fn admin(ctx: Context) -> Response:
+  response.send(200, "admin")
+
+fn settings(ctx: Context) -> Response:
+  response.send(200, "settings")
+
+fn user_detail(ctx: Context) -> Response:
+  response.send(200, "user")
+
+fn health(ctx: Context) -> Response:
+  response.send(200, "health")
+
+fn render(entries: list[RouteEntry]) -> str:
+  lines: list[str] = @[]
+  for entry in entries:
+    for m in entry.methods:
+      lines.push(m.text() + " " + entry.path)
+  lines.join("\n")
+
+fn expect(label: str, actual: str, wanted: str) -> int:
+  if actual == wanted:
+    out("ok $label")
+    return 0
+  out("FAIL $label")
+  out("  got:  [$actual]")
+  out("  want: [$wanted]")
+  1
+
+fn AdminRouter() -> Router:
+  router():
+    Route(path = "/", controller = admin)
+    Route(path = "/settings", controller = settings)
+    Routes(path = "/users"):
+      Route(path = "/:id", controller = user_detail)
+
+fn RootRouter() -> Router:
+  router():
+    Route(path = "/", controller = home)
+    Route(path = "/users", controller = users)
+    UseRouter(path = "/admin", router = AdminRouter)
+
+fn ARouter() -> Router:
+  router():
+    UseRouter(path = "/b", router = BRouter)
+
+fn BRouter() -> Router:
+  router():
+    Routes(path = "/c"):
+      UseRouter(path = "/d", router = CRouter)
+
+fn CRouter() -> Router:
+  router():
+    Route(path = "/:id", controller = user_detail)
+
+fn DeepRouter() -> Router:
+  router():
+    UseRouter(path = "/a", router = ARouter)
+
+fn CombinedRouter() -> Router:
+  router():
+    Routes(path = "/api"):
+      Route(path = "/status", controller = health)
+      UseRouter(path = "/admin", router = AdminRouter)
+
+fn main() -> int:
+  failures = 0
+
+  match RootRouter().flatten():
+    ok(entries):
+      failures = failures + expect(
+        "reference_table",
+        render(entries),
+        "GET /\nGET /users\nGET /admin\nGET /admin/settings\nGET /admin/users/:id"
+      )
+    err(error):
+      failures = failures + expect("reference_table", error.message, "ok")
+
+  match DeepRouter().flatten():
+    ok(entries):
+      failures = failures + expect("deep_nesting", render(entries), "GET /a/b/c/d/:id")
+    err(error):
+      failures = failures + expect("deep_nesting", error.message, "ok")
+
+  match CombinedRouter().flatten():
+    ok(entries):
+      failures = failures + expect(
+        "routes_plus_use",
+        render(entries),
+        "GET /api/status\nGET /api/admin\nGET /api/admin/settings\nGET /api/admin/users/:id"
+      )
+    err(error):
+      failures = failures + expect("routes_plus_use", error.message, "ok")
+
+  failures
