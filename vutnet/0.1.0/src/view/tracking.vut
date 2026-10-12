@@ -1,0 +1,12 @@
+# Native SSR executes these as no-ops. The browser host isolates the initial
+# evaluation of a binding from any ancestor dependency collector.
+extern "C" fn vutnet_view_scope_begin_v1() -> void
+extern "C" fn vutnet_view_scope_end_v1() -> void
+
+fn initial_value[T](evaluate: fn() -> T) -> T:
+  unsafe:
+    vutnet_view_scope_begin_v1()
+  value = evaluate()
+  unsafe:
+    vutnet_view_scope_end_v1()
+  value

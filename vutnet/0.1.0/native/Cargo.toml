@@ -1,0 +1,57 @@
+[package]
+name = "vutnet-native"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+build = "build.rs"
+
+[lib]
+name = "vutnet_native"
+crate-type = ["rlib", "staticlib"]
+
+# Keep the package's native dependencies separate from the compiler workspace.
+[workspace]
+members = ["server"]
+resolver = "3"
+
+[dependencies]
+anstream = "1"
+anstyle = "1"
+anyhow = "1"
+cap-std = "4"
+cssparser = { version = "0.38", default-features = false }
+ctrlc = "3.5"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+html5ever = "0.27"
+mime = "0.3"
+mime_guess = "2"
+multer = "3"
+http = "1"
+matchit = "0.8"
+markup5ever = "0.12"
+notify = "8.2"
+percent-encoding = "2"
+process-wrap = { version = "10.0.1", features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+toml = "0.9"
+server-native = { package = "vutnet-server-native", path = "server" }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "signal", "fs"] }
+unicode-width = "0.2"
+vut-native-abi = { path = "../../../crates/vut-native-abi", features = ["identity"] }
+vut-native-sdk = { path = "../../../crates/vut-native-sdk" }
+
+[build-dependencies]
+toml = "0.9"
+vut-native-abi = { path = "../../../crates/vut-native-abi", features = ["identity"] }
+
+[dev-dependencies]
+vut-runtime = { path = "../../../crates/vut-runtime" }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

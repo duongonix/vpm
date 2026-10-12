@@ -1,0 +1,22 @@
+backend = "cargo"
+
+[output]
+name = "vutnet_native"
+
+[cargo]
+manifest = "native/Cargo.toml"
+
+[target.x86_64-pc-windows-msvc]
+artifact = "native/target/release/vutnet_native.lib"
+
+[target.x86_64-unknown-linux-gnu]
+artifact = "native/target/release/libvutnet_native.a"
+
+[target.aarch64-unknown-linux-gnu]
+artifact = "native/target/release/libvutnet_native.a"
+
+[target.x86_64-apple-darwin]
+artifact = "native/target/release/libvutnet_native.a"
+
+[target.aarch64-apple-darwin]
+artifact = "native/target/release/libvutnet_native.a"

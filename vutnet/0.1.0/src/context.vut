@@ -1,0 +1,213 @@
+# Owned snapshot of one accepted HTTP request. No pointer into Hyper storage escapes.
+import.response at Response
+import.multipart at Multipart, MultipartError
+
+data KeyValue:
+  key: str
+  value: str
+
+type Controller = fn(Context) -> Response
+type Next = fn(Context) -> Response
+type Middleware = fn(Context, Next) -> Response
+
+data MiddlewareEntry:
+  _middleware: Middleware
+
+data ScopedMiddleware:
+  _scope_id: int
+  _middleware: Middleware
+
+data MiddlewareLayer:
+  _registrations: list[ScopedMiddleware]
+  _scope_ids: list[int]
+
+data DispatchPipeline:
+  _global_middleware: list[MiddlewareEntry]
+  _layers: list[MiddlewareLayer]
+  _controller: Controller
+  _dispatch: Next
+
+data Context:
+  _method: str
+  _path: str
+  _params: list[KeyValue]
+  _query: list[KeyValue]
+  _headers: list[KeyValue]
+  _body: bytes
+  _multipart: Multipart
+  _client_ip: str
+  _client_port: int
+  _request_id: int
+  _pipeline: DispatchPipeline
+  _global_index: int
+  _layer_index: int
+  _scope_index: int
+  _middleware_index: int
+
+fn _find(values: list[KeyValue], name: str) -> str?:
+  for pair in values:
+    if pair.key == name:
+      return pair.value
+  null
+
+fn Context.method() -> str:
+  self._method
+
+fn Context.path() -> str:
+  self._path
+
+fn Context.param(name: str) -> str?:
+  _find(self._params, name)
+
+fn Context.param_or(name: str, fallback: str) -> str:
+  match self.param(name):
+    null: fallback
+    value: value
+
+fn Context.query(name: str) -> str?:
+  _find(self._query, name)
+
+fn Context.query_or(name: str, fallback: str) -> str:
+  match self.query(name):
+    null: fallback
+    value: value
+
+fn Context.header(name: str) -> str?:
+  _find(self._headers, name.trim().to_lower())
+
+fn Context.header_or(name: str, fallback: str) -> str:
+  match self.header(name):
+    null: fallback
+    value: value
+
+fn Context.body_bytes() -> bytes:
+  self._body
+
+fn Context.body() -> result[str, Utf8Error]:
+  self._body.to_str()
+
+fn Context.multipart() -> result[Multipart, MultipartError]:
+  self._multipart.result()
+
+fn Context.client_ip() -> str:
+  self._client_ip
+
+fn Context.client_port() -> int:
+  self._client_port
+
+fn Context.request_id() -> int:
+  self._request_id
+
+fn middleware_entry(middleware: Middleware) -> MiddlewareEntry:
+  MiddlewareEntry(_middleware: middleware)
+
+fn scoped_middleware(scope_id: int, middleware: Middleware) -> ScopedMiddleware:
+  ScopedMiddleware(_scope_id: scope_id, _middleware: middleware)
+
+fn empty_pipeline(controller: Controller) -> DispatchPipeline:
+  DispatchPipeline(
+    _global_middleware: @[],
+    _layers: @[],
+    _controller: controller,
+    _dispatch: _dispatch
+  )
+
+fn middleware_layer(registrations: list[ScopedMiddleware], scope_ids: list[int]) -> MiddlewareLayer:
+  MiddlewareLayer(_registrations: registrations, _scope_ids: scope_ids)
+
+fn DispatchPipeline.with_prefix_layers(prefix: list[MiddlewareLayer]) -> DispatchPipeline:
+  layers: list[MiddlewareLayer] = @[]
+  for layer in prefix:
+    layers.push(layer)
+  for layer in self._layers:
+    layers.push(layer)
+  DispatchPipeline(
+    _global_middleware: self._global_middleware,
+    _layers: layers,
+    _controller: self._controller,
+    _dispatch: _dispatch
+  )
+
+fn DispatchPipeline.with_global_middleware(
+  middleware: list[MiddlewareEntry]
+) -> DispatchPipeline:
+  DispatchPipeline(
+    _global_middleware: middleware,
+    _layers: self._layers,
+    _controller: self._controller,
+    _dispatch: _dispatch
+  )
+
+fn _copy_context(
+  ctx: Context,
+  global_index: int,
+  layer_index: int,
+  scope_index: int,
+  middleware_index: int
+) -> Context:
+  Context(
+    _method: ctx._method,
+    _path: ctx._path,
+    _params: ctx._params,
+    _query: ctx._query,
+    _headers: ctx._headers,
+    _body: ctx._body,
+    _multipart: ctx._multipart,
+    _client_ip: ctx._client_ip,
+    _client_port: ctx._client_port,
+    _request_id: ctx._request_id,
+    _pipeline: ctx._pipeline,
+    _global_index: global_index,
+    _layer_index: layer_index,
+    _scope_index: scope_index,
+    _middleware_index: middleware_index
+  )
+
+fn _dispatch(ctx: Context) -> Response:
+  if ctx._global_index < ctx._pipeline._global_middleware.len():
+    entry = ctx._pipeline._global_middleware.at(ctx._global_index)
+    next_context = _copy_context(
+      ctx,
+      ctx._global_index + 1,
+      ctx._layer_index,
+      ctx._scope_index,
+      ctx._middleware_index
+    )
+    return entry._middleware(next_context, _dispatch)
+
+  if ctx._layer_index >= ctx._pipeline._layers.len():
+    return ctx._pipeline._controller(ctx)
+
+  layer = ctx._pipeline._layers.at(ctx._layer_index)
+  if ctx._scope_index >= layer._scope_ids.len():
+    next_layer = _copy_context(
+      ctx,
+      ctx._global_index,
+      ctx._layer_index + 1,
+      0,
+      0
+    )
+    return _dispatch(next_layer)
+
+  scope_id = layer._scope_ids.at(ctx._scope_index)
+  if ctx._middleware_index >= layer._registrations.len():
+    next_scope = _copy_context(
+      ctx,
+      ctx._global_index,
+      ctx._layer_index,
+      ctx._scope_index + 1,
+      0
+    )
+    return _dispatch(next_scope)
+
+  registration = layer._registrations.at(ctx._middleware_index)
+  next_middleware = _copy_context(
+    ctx,
+    ctx._global_index,
+    ctx._layer_index,
+    ctx._scope_index,
+    ctx._middleware_index + 1
+  )
+  if registration._scope_id == scope_id:
+    return registration._middleware(next_middleware, _dispatch)
+  _dispatch(next_middleware)

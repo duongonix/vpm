@@ -1,0 +1,76 @@
+import.router as router_module
+import.router at Router, RouteEntry, RouterFactory
+import.context at Context, MiddlewareEntry, middleware_entry
+import.response at Response
+import.response as response
+import.static_files at StaticMount, mount
+
+type Next = fn(Context) -> Response
+type Middleware = fn(Context, Next) -> Response
+
+@link_name("vutnet_app_listen_v3")
+extern "C" fn _native_listen_v3(
+  port: i32,
+  max_body_bytes: i32,
+  entries: list[RouteEntry],
+  mounts: list[StaticMount]
+) -> i32
+
+data App:
+  _router: fn() -> Router
+  _max_body_bytes: i32
+  _middleware: list[MiddlewareEntry]
+  _static_mounts: list[StaticMount]
+
+enum AppConfigError:
+  invalid_body_limit
+
+# A fresh application has a valid empty router that returns 404. Calling
+# App.router replaces it before listen.
+fn _empty_controller(ctx: Context) -> Response:
+  response.send(404, "Not Found")
+
+fn _empty_router() -> Router:
+  router_module.router:
+    Route(path = "/", controller = _empty_controller)
+
+fn app() -> App:
+  App(_router: _empty_router, _max_body_bytes: 1048576, _middleware: @[], _static_mounts: @[])
+
+# `static` is a reserved Vut keyword; this method uses a valid identifier.
+# Invalid roots/prefixes are reported by listen with setup code -7.
+fn App.static_files(prefix: str, directory: str) -> void:
+  self._static_mounts.push(mount(prefix, directory))
+
+# Register process-wide middleware. Calls keep their registration order.
+fn App.use(middleware: Middleware) -> void:
+  self._middleware.push(middleware_entry(middleware))
+
+fn App.router(factory: fn() -> Router) -> void:
+  self._router = factory
+
+# Returns a configured copy; zero permits empty request bodies only.
+fn App.with_max_body_bytes(limit: i32) -> result[App, AppConfigError]:
+  if limit < 0:
+    return err(AppConfigError.invalid_body_limit)
+  ok(App(
+    _router: self._router,
+    _max_body_bytes: limit,
+    _middleware: self._middleware,
+    _static_mounts: self._static_mounts
+  ))
+
+# Runs the blocking server. Returns 0 for clean shutdown or a stable negative
+# setup/error code; request-level failures are mapped to HTTP responses.
+fn App.listen(port: i32) -> i32:
+  configured = self._router().with_global_middleware(self._middleware)
+  flattened = configured.flatten()
+  match flattened:
+    ok(entries):
+      unsafe:
+        _native_listen_v3(port, self._max_body_bytes, entries, self._static_mounts)
+    err(_):
+      -4
+
+fn version() -> str:
+  "0.1.0"

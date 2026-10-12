@@ -1,0 +1,26 @@
+[package]
+name = "vutnet"
+version = "0.1.0"
+description = "Typed native HTTP framework and development tools for Vut."
+license = "MIT"
+repository = "https://github.com/duongonix/vut_repo"
+homepage = "https://github.com/duongonix/vut_repo/tree/main/vpm-package/vutnet"
+keywords = ["web", "http", "framework", "server-rendering", "vut"]
+
+[native]
+build = "native/build.toml"
+
+[native.callback_abi]
+major = 1
+minimum_minor = 0
+features = [
+  "managed_import",
+  "value_str_bytes",
+  "value_lists",
+  "data_fields",
+  "result_values",
+]
+
+[[bin]]
+name = "vutnet"
+path = "src/bin/vutnet.vut"

@@ -1,0 +1,95 @@
+# Phase 4 event values are Vut-owned. No handler is passed through the SSR
+# renderer or promoted to a host callback by this module.
+import .. view at View
+
+type ClickHandler = fn(ClickEvent) -> void
+
+data ClickEvent:
+  _target_id: str
+  _button: int
+  _alt_key: bool
+  _ctrl_key: bool
+  _meta_key: bool
+  _shift_key: bool
+
+data EventBinding:
+  _target_id: str
+  _handler: ClickHandler
+
+data InteractiveView:
+  _view: View
+  _clicks: list[EventBinding]
+
+enum EventError:
+  empty_target_id
+  missing_target
+  duplicate_target
+  duplicate_click_binding
+
+fn click_event(
+  target_id: str,
+  button: int,
+  alt_key: bool,
+  ctrl_key: bool,
+  meta_key: bool,
+  shift_key: bool
+) -> ClickEvent:
+  ClickEvent(
+    _target_id: target_id,
+    _button: button,
+    _alt_key: alt_key,
+    _ctrl_key: ctrl_key,
+    _meta_key: meta_key,
+    _shift_key: shift_key
+  )
+
+fn on_click(target_id: str, handler: ClickHandler) -> EventBinding:
+  EventBinding(_target_id: target_id, _handler: handler)
+
+fn interactive(view: View, clicks: list[EventBinding]) -> result[InteractiveView, EventError]:
+  for index in 0 .. clicks.len():
+    binding = clicks.at(index)
+    if binding._target_id.byte_len() == 0:
+      return err(EventError.empty_target_id)
+    target_count = view.element_id_count(binding._target_id)
+    if target_count == 0:
+      return err(EventError.missing_target)
+    if target_count != 1:
+      return err(EventError.duplicate_target)
+    for previous in 0 .. index:
+      if clicks.at(previous)._target_id == binding._target_id:
+        return err(EventError.duplicate_click_binding)
+  ok(InteractiveView(_view: view, _clicks: clicks))
+
+fn InteractiveView.base_view() -> View:
+  self._view
+
+fn InteractiveView.click_binding_count() -> int:
+  self._clicks.len()
+
+# This typed in-process dispatch is a Phase 4 ownership proof, not a DOM host.
+# Browser dispatch must enter the Vut runtime through a future public host ABI.
+fn InteractiveView.dispatch_click(event: ClickEvent) -> bool:
+  for binding in self._clicks:
+    if binding._target_id == event._target_id:
+      binding._handler(event)
+      return true
+  false
+
+fn ClickEvent.target_id() -> str:
+  self._target_id
+
+fn ClickEvent.button() -> int:
+  self._button
+
+fn ClickEvent.alt_key() -> bool:
+  self._alt_key
+
+fn ClickEvent.ctrl_key() -> bool:
+  self._ctrl_key
+
+fn ClickEvent.meta_key() -> bool:
+  self._meta_key
+
+fn ClickEvent.shift_key() -> bool:
+  self._shift_key

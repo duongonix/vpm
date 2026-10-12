@@ -1,0 +1,59 @@
+# A `RouterFactory` mounted by `UseRouter` is invoked exactly once, even when it
+# contributes several endpoints.
+import vutnet.router at router, Router, Controller, RouteEntry, RouterFactory
+import vutnet.context at Context
+import vutnet.response at Response
+import vutnet.response as response
+
+fn home(ctx: Context) -> Response:
+  response.send(200, "home")
+
+fn render(entries: list[RouteEntry]) -> str:
+  lines: list[str] = @[]
+  for entry in entries:
+    for m in entry.methods:
+      lines.push(m.text() + " " + entry.path)
+  lines.join("\n")
+
+fn expect(label: str, actual: str, wanted: str) -> int:
+  if actual == wanted:
+    out("ok $label")
+    return 0
+  out("FAIL $label")
+  out("  got:  [$actual]")
+  out("  want: [$wanted]")
+  1
+
+# A reference-shared counter so the test can observe factory invocations.
+data Counter:
+  count: int
+
+fn build_two() -> Router:
+  router():
+    Route(path = "/", controller = home)
+    Route(path = "/extra", controller = home)
+
+fn make_factory(counter: Counter) -> RouterFactory:
+  fn():
+    counter.count = counter.count + 1
+    build_two()
+
+fn mount(factory: RouterFactory) -> Router:
+  router():
+    UseRouter(path = "/m", router = factory)
+
+fn main() -> int:
+  failures = 0
+  counter = Counter(count: 0)
+  factory = make_factory(counter)
+  mounted = mount(factory)
+
+  failures = failures + expect("factory_invoked_once", "$(counter.count)", "1")
+
+  match mounted.flatten():
+    ok(entries):
+      failures = failures + expect("factory_routes", render(entries), "GET /m\nGET /m/extra")
+    err(error):
+      failures = failures + expect("factory_routes", error.message, "ok")
+
+  failures

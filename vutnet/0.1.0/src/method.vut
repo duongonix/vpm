@@ -1,0 +1,23 @@
+# Typed HTTP methods used by the Router DSL.
+#
+# Vutnet keeps its own method type rather than reusing the stdlib `http` client
+# method: the server side must not depend on the outgoing client module.
+enum Method:
+  get
+  post
+  put
+  patch
+  delete
+  head
+  options
+
+# Canonical wire text for a method ("GET", "POST", ...).
+fn Method.text() -> str:
+  match self:
+    get: "GET"
+    post: "POST"
+    put: "PUT"
+    patch: "PATCH"
+    delete: "DELETE"
+    head: "HEAD"
+    options: "OPTIONS"

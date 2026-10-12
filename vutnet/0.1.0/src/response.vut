@@ -1,0 +1,147 @@
+# Immutable response value returned by Controller(Context).
+import json at Value, Encodable, stringify
+import.view at View
+import.view as views
+
+data Header:
+  _name: str
+  _value: str
+
+enum HeaderError:
+  invalid_name
+  invalid_value
+
+@abi_schema(2)
+data Response:
+  _status: int
+  _body: bytes
+  _content_type: str
+  _headers: list[Header]
+  # Native-only diagnostic for framework-generated 500 responses; never sent to clients.
+  _diagnostic: str = ""
+
+# Text content uses UTF-8 and an explicit text media type.
+fn send(code: int, content: str) -> Response:
+  Response(
+    _status: code,
+    _body: content.to_bytes(),
+    _content_type: "text/plain; charset=utf-8",
+    _headers: @[]
+  )
+
+# Server-rendered HTML is an immutable response with an explicit UTF-8 media
+# type. HTML content must come from view.render or another trusted serializer.
+fn html(code: int, content: str) -> Response:
+  Response(
+    _status: code,
+    _body: content.to_bytes(),
+    _content_type: "text/html; charset=utf-8",
+    _headers: @[]
+  )
+
+# Binary content is copied/owned as bytes and sent unchanged.
+fn send_bytes(code: int, content: bytes) -> Response:
+  Response(
+    _status: code,
+    _body: content,
+    _content_type: "application/octet-stream",
+    _headers: @[]
+  )
+
+# Serialize an already-typed dynamic JSON value. json.stringify is total for a
+# valid json.Value, so this constructor has no serialization error branch.
+fn json(code: int, content: Value) -> Response:
+  Response(
+    _status: code,
+    _body: stringify(content).to_bytes(),
+    _content_type: "application/json; charset=utf-8",
+    _headers: @[]
+  )
+
+# Eligible data records receive compiler-generated json.Encodable methods;
+# custom to_json() remains available for application-defined wire formats.
+fn json_encodable(code: int, content: Encodable) -> Response:
+  json(code, content.to_json())
+
+# High-level server rendering for a Page with no data.
+fn render(page: fn() -> View) -> Response:
+  _render_view(page())
+
+# Typed Page data remains statically checked; the shared View renderer owns
+# layout/slot resolution and HTML serialization.
+fn render[T](page: fn(T) -> View, page_data: T) -> Response:
+  _render_view(page(page_data))
+
+# Hydratable rendering records the typed Page call-site identity in the
+# versioned bootstrap envelope. VPM uses the same compiler call-site identity
+# to generate the matching browser factory.
+@track_caller
+fn render_hydratable(page: fn() -> View) -> Response:
+  page_id = caller_call_site_id()
+  _render_hydratable_view(page(), page_id, false, "null")
+
+@track_caller
+fn render_hydratable[T: Encodable](page: fn(T) -> View, page_data: T) -> Response:
+  page_id = caller_call_site_id()
+  _render_hydratable_view(page(page_data), page_id, true, stringify(page_data.to_json()))
+
+fn _render_hydratable_view(value: View, page_id: u64, has_data: bool, data_json: str) -> Response:
+  match views.render_hydratable_with_bootstrap(value, page_id, has_data, data_json):
+    ok(content): html(200, content)
+    err(diagnostic): _internal_error(diagnostic)
+
+fn _render_view(value: View) -> Response:
+  match views.render(value):
+    ok(content): html(200, content)
+    err(diagnostic): _internal_error(diagnostic)
+
+fn _internal_error(diagnostic: str) -> Response:
+  Response(
+    _status: 500,
+    _body: "Internal Server Error".to_bytes(),
+    _content_type: "text/plain; charset=utf-8",
+    _headers: @[],
+    _diagnostic: diagnostic
+  )
+
+# Return a copy with the named header replaced case-insensitively. Header names
+# and values are checked against HTTP field syntax before they enter Response.
+fn Response.with_header(name: str, value: str) -> result[Response, HeaderError]:
+  if not _valid_header_name(name):
+    return err(HeaderError.invalid_name)
+  if not _valid_header_value(value):
+    return err(HeaderError.invalid_value)
+
+  normalized = name.to_lower()
+  headers: list[Header] = @[]
+  for existing in self._headers:
+    if existing._name.to_lower() != normalized:
+      headers.push(existing)
+  headers.push(Header(_name: name, _value: value))
+  ok(Response(
+    _status: self._status,
+    _body: self._body,
+    _content_type: self._content_type,
+    _headers: headers,
+    _diagnostic: self._diagnostic
+  ))
+
+fn _valid_header_name(name: str) -> bool:
+  bytes = name.to_bytes()
+  if bytes.len() == 0:
+    return false
+  for index in 0 .. bytes.len():
+    if not _is_header_name_byte(bytes.byte_at(index)):
+      return false
+  true
+
+fn _is_header_name_byte(byte: int) -> bool:
+  (byte >= 48 and byte <= 57) or (byte >= 65 and byte <= 90) or (byte >= 97 and byte <= 122) or byte == 33 or byte == 35 or byte == 36 or byte == 37 or byte == 38 or byte == 39 or byte == 42 or byte == 43 or byte == 45 or byte == 46 or byte == 94 or byte == 95 or byte == 96 or byte == 124 or byte == 126
+
+fn _valid_header_value(value: str) -> bool:
+  bytes = value.to_bytes()
+  for index in 0 .. bytes.len():
+    byte = bytes.byte_at(index)
+    if byte != 9 and byte != 32 and not (byte >= 33 and byte <= 126) and byte < 128:
+      return false
+  true

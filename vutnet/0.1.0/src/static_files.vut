@@ -1,0 +1,7 @@
+# Configuration only. The native adapter resolves roots before binding.
+data StaticMount:
+  _prefix: str
+  _directory: str
+
+fn mount(prefix: str, directory: str) -> StaticMount:
+  StaticMount(_prefix: prefix, _directory: directory)

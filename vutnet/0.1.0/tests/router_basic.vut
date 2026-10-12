@@ -1,0 +1,82 @@
+# Router DSL basics: a single Route, the default GET, an explicit method and a
+# multi-method endpoint.
+import vutnet.router at router, Router, Controller, RouteEntry
+import vutnet.method as method
+import vutnet.context at Context
+import vutnet.response at Response
+import vutnet.response as response
+
+fn home(ctx: Context) -> Response:
+  response.send(200, "home")
+
+fn health(ctx: Context) -> Response:
+  response.send(200, "health")
+
+fn render(entries: list[RouteEntry]) -> str:
+  lines: list[str] = @[]
+  for entry in entries:
+    for m in entry.methods:
+      lines.push(m.text() + " " + entry.path)
+  lines.join("\n")
+
+fn expect(label: str, actual: str, wanted: str) -> int:
+  if actual == wanted:
+    out("ok $label")
+    return 0
+  out("FAIL $label")
+  out("  got:  [$actual]")
+  out("  want: [$wanted]")
+  1
+
+fn single() -> Router:
+  router():
+    Route(path = "/", controller = home)
+
+fn default_method() -> Router:
+  router():
+    Route(path = "/health", controller = health)
+
+fn explicit_method() -> Router:
+  router():
+    Route(path = "/health", controller = health, method = @[method.Method.post])
+
+fn multi_method() -> Router:
+  router():
+    Route(
+      path = "/health",
+      controller = health,
+      method = @[method.Method.get, method.Method.head, method.Method.post]
+    )
+
+fn main() -> int:
+  failures = 0
+
+  match single().flatten():
+    ok(entries):
+      failures = failures + expect("single_route", render(entries), "GET /")
+    err(error):
+      failures = failures + expect("single_route", error.message, "ok")
+
+  match default_method().flatten():
+    ok(entries):
+      failures = failures + expect("default_get", render(entries), "GET /health")
+    err(error):
+      failures = failures + expect("default_get", error.message, "ok")
+
+  match explicit_method().flatten():
+    ok(entries):
+      failures = failures + expect("explicit_method", render(entries), "POST /health")
+    err(error):
+      failures = failures + expect("explicit_method", error.message, "ok")
+
+  match multi_method().flatten():
+    ok(entries):
+      failures = failures + expect(
+        "multi_method",
+        render(entries),
+        "GET /health\nHEAD /health\nPOST /health"
+      )
+    err(error):
+      failures = failures + expect("multi_method", error.message, "ok")
+
+  failures
